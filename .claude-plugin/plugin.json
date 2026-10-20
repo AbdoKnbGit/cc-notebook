@@ -1,0 +1,21 @@
+{
+  "name": "cc-notebook",
+  "version": "0.1.0",
+  "description": "Cell-based Markdown and persistent Python notebooks inside Claude Code.",
+  "author": {
+    "name": "AbdoKnbGit",
+    "url": "https://github.com/AbdoKnbGit"
+  },
+  "homepage": "https://github.com/AbdoKnbGit/cc-notebook",
+  "repository": "https://github.com/AbdoKnbGit/cc-notebook",
+  "documentationUrl": "https://github.com/AbdoKnbGit/cc-notebook#readme",
+  "keywords": [
+    "notebook",
+    "python",
+    "markdown",
+    "jupyter",
+    "claude-code"
+  ],
+  "types": "./types/index.d.ts",
+  "license": "MIT"
+}

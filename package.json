@@ -1,0 +1,14 @@
+{
+  "name": "cc-notebook",
+  "version": "0.1.0",
+  "private": false,
+  "scripts": {
+    "build": "tsc -p .",
+    "test": "python -m unittest discover -s notebook -p \"test_*.py\" -v",
+    "test:plugin": "claude plugin test .",
+    "validate": "claude plugin validate ."
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}

@@ -1,0 +1,10 @@
+.DS_Store
+*.log
+node_modules/
+.claude-plugin/types/
+.cache/
+.claude-notebook/
+__pycache__/
+*.pyc
+.venv/
+.claude/settings.local.json

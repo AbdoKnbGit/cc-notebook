@@ -1,0 +1,15 @@
+{
+  "name": "cc-notebook",
+  "owner": {
+    "name": "AbdoKnbGit"
+  },
+  "metadata": {
+    "description": "Cell-based Markdown and Python notebooks for Claude Code."
+  },
+  "plugins": [
+    {
+      "name": "cc-notebook",
+      "source": "./"
+    }
+  ]
+}
