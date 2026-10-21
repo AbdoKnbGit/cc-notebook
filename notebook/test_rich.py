@@ -19,6 +19,47 @@ def png(color='red', format='PNG'):
 
 
 class RichTests(unittest.TestCase):
+    def test_line_chart_metadata_preserves_labels_gaps_and_original_png(self):
+        from plot import describe
+        import matplotlib.pyplot as plt
+        fig, ax = plt.subplots()
+        try:
+            ax.plot([0, 1, 2], [1, float('nan'), .1], label='Measured')
+            ax.set(xlabel='Time (s)', ylabel='Signal', title='Decay')
+            data = describe(fig)
+            self.assertEqual(data['xlabel'], 'Time (s)')
+            self.assertEqual(data['series'][0]['points'], [[0., 1.], None, [2., .1]])
+            ax.set_xscale('log')
+            self.assertIsNone(describe(fig))
+            ax.set_xscale('linear')
+            ax.scatter([1], [1])
+            self.assertIsNone(describe(fig))
+        finally:
+            plt.close(fig)
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            service = Service(root, root / '.runtime')
+            try:
+                path = root / 'chart.nb.md'
+                source = "import matplotlib.pyplot as plt\nfig, ax = plt.subplots()\nax.plot([0, 1, 2], [1, .4, .1], label='Measured')\nax.set(xlabel='Time (s)', ylabel='Signal', title='Decay')\nplt.show()"
+                path.write_text(serialize({'title': 'Chart', 'cells': [cell('python', source)]}), encoding='utf-8')
+                view = service.handle({'action': 'open', 'path': str(path)})
+                view = service.handle({'action': 'run', 'id': view['cells'][0]['id'], 'revision': view['revision']})
+                output = next(o for o in view['cells'][0]['run']['outputs'] if o.get('asset'))
+                plot_file = Path(output['asset']['plot'])
+                data = json.loads(plot_file.read_text())
+                self.assertEqual(data['xlabel'], 'Time (s)')
+                self.assertEqual(len(data['series'][0]['points']), 3)
+                self.assertNotIn('points', json.dumps(output))
+                plot_file.unlink()
+                service.handle({'action': 'status'})
+                self.assertTrue(plot_file.exists())
+                exported = service.handle({'action': 'export'})['destination']
+                book = json.loads(Path(exported).read_text())
+                self.assertTrue(any('image/png' in o.get('data', {}) for o in book['cells'][0]['outputs']))
+            finally:
+                service.kernel.stop()
+
     def test_parser_protects_code_and_incomplete_blocks(self):
         source = '# Explain\n\n```mermaid\ngraph TD\n A --> B\n```\n\n$$x^2$$\n\n![plot](<plots/my plot.png>)\n'
         parsed = blocks(source)

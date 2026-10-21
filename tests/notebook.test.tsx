@@ -2,6 +2,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import { commandOf, parseGenerated, TOOL, PANE } from '../hooks/notebook/model'
 import { fitPlot, plotSource, clearImageCache } from '../hooks/notebook/images'
 import { diagram, inlineMath, mathText, raster, imageUri } from '../hooks/notebook/rich'
+import { terminalPlot } from '../hooks/notebook/plot'
 
 const CMD = { origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 100 } } as const
 const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aL1sAAAAASUVORK5CYII='
@@ -161,7 +162,7 @@ test('SSH uses cached PNG bytes and retains the original image path', async ($, 
   const ui = await mount($)
   const shown: any = await ui.find({ type: 'Image' })
   expect(shown?.props.source.png).toBe(PNG)
-  expect(await ui.find({ type: 'Text', text: file })).toBeDefined()
+  expect((await ui.find({ type: 'Link', text: /Open original image/ }))?.props.href).toBe(imageUri(file))
   await ui.unmount()
 })
 
@@ -204,12 +205,14 @@ test('math preserves code, currency and unsupported commands', () => {
   expect(imageUri('C:\\my work\\plot #1.png')).toBe('file:///C:/my%20work/plot%20%231.png')
 })
 
-test('Raster encoding is bounded and transparent pixels follow the theme', () => {
+test('Raster uses the terminal default for transparency rather than a guessed white or black', () => {
   const pixels = { width: 1, height: 2, rgba: 'ff0000ff00000000' }
   const dark = raster(pixels, 1, 1, false)
   const light = raster(pixels, 1, 1, true)
   expect(dark?.length).toBe(16)
-  expect(dark).not.toBe(light)
+  expect(dark).toBe(light)
+  expect(raster({ width: 1, height: 1, rgba: '00000000' }, 1, 1, false)).toBe('IAAAAAAAAAEAAAAB')
+  expect(raster({ width: 1, height: 1, rgba: 'ff000080' }, 1, 1, false)).not.toBe(raster({ width: 1, height: 1, rgba: 'ff000080' }, 1, 1, true))
   expect(raster(pixels, 0, 1, false)).toBe(null)
   expect(raster({ ...pixels, rgba: 'bad' }, 10, 10, false)).toBe(null)
 })
@@ -231,10 +234,50 @@ test('Windows fallback draws an inline Raster in output order without leaking pi
   const ui = await mount($)
   const drawing = JSON.stringify(await ui.drawn())
   expect(await ui.find({ type: 'Raster' })).toBeDefined()
-  expect(await ui.find({ type: 'Link', text: 'Open original image' })).toBeDefined()
+  expect(await ui.find({ type: 'Link', text: /Open original image/ })).toBeDefined()
   expect(drawing.indexOf('Before image')).toBeLessThan(drawing.indexOf('Raster'))
   expect(drawing.indexOf('Raster')).toBeLessThan(drawing.indexOf('After image'))
   expect(drawing).not.toContain('<Figure>')
+  await ui.unmount()
+})
+
+const plotData = () => ({ version: 1, title: 'Decay experiment', xlabel: 'Time (s)', ylabel: 'Signal', limits: [0, 6, 0, 1], series: [{ points: [[0, 1], [2, .368], [6, .05]], color: '#2563eb', label: 'Measured', connected: true, dashed: false }] })
+
+test('terminal plots preserve labels and reject unsupported or unbounded data', () => {
+  const data = plotData()
+  const chart = terminalPlot(data, 60, false)!
+  expect(chart.title).toBe('Decay experiment')
+  expect(chart.xlabel).toBe('Time (s)')
+  expect(chart.ylabel).toBe('Signal')
+  expect(chart.xlabels).toEqual(['0', '3', '6'])
+  expect(chart.ylabels[0]).toBe('1')
+  expect(chart.ylabels[chart.rows - 1]).toBe('0')
+  expect(chart.columns).toBeLessThanOrEqual(60)
+  expect(terminalPlot({ ...data, limits: [0, 0, 0, 1] }, 60, false)).toBe(null)
+  expect(terminalPlot({ ...data, version: 2 }, 60, false)).toBe(null)
+  expect(terminalPlot(data, 10, false)).toBe(null)
+  data.series[0]!.points = [[1e100, 1e100], [2e100, 2e100]]
+  expect(terminalPlot(data, 60, false)).not.toBe(null)
+  data.series[0]!.points = [[NaN, 1]]
+  expect(terminalPlot(data, 60, false)).toBe(null)
+})
+
+test('unsupported image terminals show a transparent data chart with readable axis labels', async ($, on) => {
+  const w = world(on, { env: { OS: 'Windows_NT', TERM_PROGRAM: 'Windows_Terminal' } })
+  const asset = { file: '/work/curve.png', preview: '/work/curve-preview.png', pixels: '/work/curve-pixels.json', plot: '/work/curve-plot.json', width: 800, height: 400, preview_width: 800, preview_height: 400 }
+  w.view.cells[1].run = { outputs: [{ output_type: 'display_data', asset }], images: [asset.file], image_info: { [asset.file]: asset }, duration_ms: 1, at: 1 }
+  on('fs.stat', () => ({ value: { kind: 'file', size: 500, mtimeMs: 1, isLink: false } }))
+  on('fs.read', () => ({ value: JSON.stringify(plotData()) }))
+  await ($ as any).session.start({ source: 'startup', cwd: '/work' })
+  await run($, 'new n.nb.md')
+  await run($, 'select 2')
+  const ui = await mount($)
+  expect(await ui.find({ type: 'Text', text: 'Time (s)' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'Signal' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'Decay experiment' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'Terminal chart · plotted data' })).toBeDefined()
+  expect(await ui.find({ type: 'Raster' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: asset.file })).toBeUndefined()
   await ui.unmount()
 })
 

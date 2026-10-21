@@ -162,10 +162,10 @@ class Documents:
             run.update(status="evicted", outputs=[{"output_type": "stream", "name": "stderr", "text": "[Output evicted by the 64 MB notebook cache limit. Rerun this cell.]"}], images=[], image_info={}, output_assets={})
         target = self.state_path(path)
         atomic_write(target, json.dumps(state, ensure_ascii=False))
-        kept = {Path(p).name for run in [*state["runs"].values(), *state.get("history", [])] for p in [*run.get("images", []), *[i[k] for i in run.get("image_info", {}).values() for k in ('preview', 'pixels') if i.get(k)]]}
+        kept = {Path(p).name for run in [*state["runs"].values(), *state.get("history", [])] for p in [*run.get("images", []), *[i[k] for i in run.get("image_info", {}).values() for k in ('preview', 'pixels', 'plot') if i.get(k)]]}
         # Never recurse, follow links, or remove files the notebook did not name.
         for entry in target.parent.iterdir():
-            if re.fullmatch(r"[0-9a-f]{24}(?:-preview\.png|-pixels\.json|\.png)", entry.name) and entry.name not in kept and not entry.is_symlink() and entry.is_file():
+            if re.fullmatch(r"[0-9a-f]{24}(?:-preview\.png|-(?:pixels|plot)\.json|\.png)", entry.name) and entry.name not in kept and not entry.is_symlink() and entry.is_file():
                 safe_cache(self.workspace, 'outputs', target.parent.name, entry.name)
                 entry.unlink()
 

@@ -4,6 +4,7 @@ import { actions, cleanText, commandOf, compactView, initialLab, outputText, par
 import { plotSource, fitPlot, clearImageCache } from './images'
 import { canDrawIn, isSet } from './terminal'
 import { diagram, inlineMath, mathText, raster, imageUri, type Pixels } from './rich'
+import { terminalPlot } from './plot'
 import type { ImageAsset, RichBlock, CellOutput } from '../../types'
 
 const lab = atom({ plugin: 'cc-notebook', key: 'lab' } as const, initialLab())
@@ -17,6 +18,7 @@ let sendBytes = false
 let generation: AbortController | null = null
 const messageOf = (error: unknown) => error instanceof Error ? error.message : String(error)
 const pixelCache = new Map<string, Pixels>()
+const plotCache = new Map<string, unknown>()
 const displayed = new Map<string, string>()
 let probeCount = 0
 let probing = false
@@ -52,14 +54,41 @@ async function lightTheme($: EngineInterface) {
 
 async function picture($: EngineInterface, elements: ElementTable, surface: RenderSurface, asset: ImageAsset, width: number, key: string, light: boolean, alt: string, site = PANE) {
   const { Box, Text, Link } = elements
-  const box = fitPlot(asset.width, asset.height, width, 14)
+  const native = 'Image' in elements && (surface !== 'terminal' || imagesSupported)
+  const box = fitPlot(asset.width, asset.height, width, native ? 20 : 10)
   const source = 'Image' in elements && (surface !== 'terminal' || imagesSupported) ? await plotSource($, asset.preview, box, sendBytes && surface === 'terminal') : null
   let drawing: RenderElement | null = null
+  let plot = false
+  if (!source && surface === 'terminal' && 'Raster' in elements && asset.plot) {
+    try {
+      if ((await $.fs.stat(asset.plot)).size > 200000) throw new Error('Plot exceeds limit')
+      let data = plotCache.get(asset.plot)
+      if (!data) {
+        data = JSON.parse(await $.fs.read(asset.plot))
+        if (plotCache.size >= 6) plotCache.delete(plotCache.keys().next().value!)
+        plotCache.set(asset.plot, data)
+      }
+      const chart = terminalPlot(data, width, light)
+      if (chart) {
+        const { Raster } = elements
+        plot = true
+        drawing = <Box flexDirection="column">
+          {chart.title ? <Text bold>{chart.title}</Text> : null}
+          {chart.ylabel ? <Text>{chart.ylabel}</Text> : null}
+          <Box flexDirection="row"><Text>{chart.ylabels.map(n => n.padStart(8) + ' │').join('\n')}</Text><Raster key={key} columns={chart.columns} rows={chart.rows} cells={chart.cells} /></Box>
+          <Text>{' '.repeat(9) + ' └' + '─'.repeat(chart.columns)}</Text>
+          <Box marginLeft={10} width={chart.columns} justifyContent="space-between">{chart.xlabels.map((n, i) => <Text key={`tick-${i}`}>{n}</Text>)}</Box>
+          {chart.xlabel ? <Box marginLeft={10} width={chart.columns} justifyContent="center"><Text>{chart.xlabel}</Text></Box> : null}
+          <Box gap={2} flexWrap="wrap">{chart.legend.filter(s => s.label).map((s, i) => <Text key={`legend-${i}`} color={s.color}>{'━ ' + s.label}</Text>)}</Box>
+        </Box>
+      }
+    } catch { /* Unsupported plots retain the original PNG preview. */ }
+  }
   if (source && 'Image' in elements) {
     const { Image } = elements
     drawing = <Image key={key} source={source} {...box} alt={alt || 'Notebook image'} />
     if (surface === 'terminal') probeImage($, site, key, source, `${asset.preview}:${box.columns}:${box.rows}`)
-  } else if (surface === 'terminal' && 'Raster' in elements && asset.pixels) {
+  } else if (!drawing && surface === 'terminal' && 'Raster' in elements && asset.pixels) {
     try {
       const stat = await $.fs.stat(asset.pixels)
       if (stat.size > 80000) throw new Error('Preview exceeds limit')
@@ -77,9 +106,9 @@ async function picture($: EngineInterface, elements: ElementTable, surface: Rend
     } catch { /* Missing or evicted previews retain their original path. */ }
   }
   return <Box key={`container-${key}`} flexDirection="column" marginY={1}>
-    <Link href={imageUri(asset.file)} label="Open original image" />
+    {!source && drawing ? <Text dimColor>{plot ? 'Terminal chart · plotted data' : 'Image thumbnail · character preview; open the original for readable detail'}</Text> : null}
     {drawing ?? <Text dimColor>{alt || 'Image'} · preview unavailable; refresh or open the original.</Text>}
-    <Text dimColor>{asset.file}</Text>
+    <Link href={imageUri(asset.file)} label={`Open original image (${asset.width} × ${asset.height})`} />
   </Box>
 }
 
@@ -234,6 +263,7 @@ export async function stopNotebook($: EngineInterface, reason: string) {
       generation?.abort()
       clearImageCache()
       pixelCache.clear()
+      plotCache.clear()
       displayed.clear()
       if (runtime) {
         await invoke($, 'request', { action: 'interrupt' }).catch(() => undefined)
@@ -352,7 +382,6 @@ export function registerNotebook(on: On) {
     const v = s.view
     const current = v?.cells.find(c => c.id === s.selected)
     const width = Math.max(12, e.props.bodyColumns || e.viewport?.columns || 80)
-    const gold = '#c2a87e', blue = '#61a5fa'
     const light = await lightTheme($)
     const markdown = current?.type === 'markdown' ? await richContent($, elements, e.surface, current.rich ?? [{ kind: 'markdown', text: current.source }], width - 4, current.id, light) : null
     const plots = []
@@ -361,11 +390,11 @@ export function registerNotebook(on: On) {
       plots.push(await picture($, elements, e.surface, { file, width: info?.width ?? 800, height: info?.height ?? 600, preview: info?.preview ?? file, preview_width: 800, preview_height: 600, pixels: info?.pixels }, width - 4, `old-${file}`, light, 'Python plot'))
     }
     return <Box flexDirection="column" paddingX={1}>
-      <Box justifyContent="space-between"><Text bold color={gold}>LAB NOTEBOOK</Text><Text dimColor>{s.cost === null ? '' : `$${s.cost.toFixed(3)} session`}</Text></Box>
+      <Box justifyContent="space-between"><Text bold color="claude">LAB NOTEBOOK</Text><Text dimColor>{s.cost === null ? '' : `$${s.cost.toFixed(3)} session`}</Text></Box>
       <Text bold>{v?.title ?? 'Your next experiment'}</Text>
       <Text dimColor>{s.busy ? `● ${s.busy}…` : v?.kernel.alive ? '● Python ready · variables retained' : '○ Python stopped · saved outputs remain'}</Text>
       {s.error ? <Text color="red">{cleanText(s.error)}</Text> : null}
-      {s.notice ? <Text color={blue}>{cleanText(s.notice)}</Text> : null}
+      {s.notice ? <Text color="success">{cleanText(s.notice)}</Text> : null}
       {!v ? <Box flexDirection="column" marginTop={1}>
         <Text>Markdown, Python and AI instructions in one notebook.</Text>
         <Button key="lab-demo" label="Open visual demo" onPress={() => act($, 'demo', { path: 'notebooks/visual-lab.nb.md' })} />
@@ -375,7 +404,7 @@ export function registerNotebook(on: On) {
       </Box> : <Box flexDirection="column">
         <Box gap={1} flexWrap="wrap">{v.cells.map((c, i) => <Button key={`cell-${c.id}`} label={`${i + 1} ${c.type}${c.status === 'stale' ? ' !' : c.status === 'ok' ? ' ✓' : ''}${c.id === s.selected ? ' ◀' : ''}`} plain onPress={() => void select($, c.id)} />)}</Box>
         {current ? <Box flexDirection="column" marginTop={1}>
-          <Text bold color={current.status === 'stale' ? 'yellow' : blue}>{`CELL ${v.cells.indexOf(current) + 1} · ${current.type.toUpperCase()} · ${current.status}${current.run ? ` · ${current.run.duration_ms} ms` : ''}`}</Text>
+          <Text bold color={current.status === 'stale' ? 'warning' : 'permission'}>{`CELL ${v.cells.indexOf(current) + 1} · ${current.type.toUpperCase()} · ${current.status}${current.run ? ` · ${current.run.duration_ms} ms` : ''}`}</Text>
           {current.generated_from ? <Text dimColor>Generated from an AI instruction · editable and saved</Text> : null}
           {current.status === 'stale' ? <Text color="yellow">Inputs or earlier execution changed. Review and rerun or regenerate.</Text> : null}
           {s.draft !== null ? <Box flexDirection="column">

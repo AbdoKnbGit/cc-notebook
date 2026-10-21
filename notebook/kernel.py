@@ -71,7 +71,8 @@ class Kernel:
         try:
             self.client.wait_for_ready(timeout=30)
             self.id = uuid.uuid4().hex
-            self.execute("%matplotlib inline", timeout=30, internal=True)
+            plot_setup = (Path(__file__).parent / 'plot.py').read_text(encoding='utf-8')
+            self.execute("%matplotlib inline\nexec(" + repr(plot_setup + '\ninstall()') + ", {})", timeout=30, internal=True)
         except BaseException:
             self.stop()
             raise
@@ -156,7 +157,7 @@ class Kernel:
                     out = {"output_type": "error", "ename": content.get("ename", "Error"), "evalue": content.get("evalue", "")[:4000], "traceback": content.get("traceback", [])[-20:]}
                 elif kind in ("display_data", "execute_result", "update_display_data"):
                     # Static output only: HTML/JS widgets are not executed in a TUI.
-                    data = {k: ''.join(v) if isinstance(v, list) else v for k, v in content.get("data", {}).items() if k in ("text/plain", "text/markdown", "text/latex", "image/png", "image/jpeg", "image/svg+xml") and isinstance(v, (str, list))}
+                    data = {k: ''.join(v) if isinstance(v, list) else v for k, v in content.get("data", {}).items() if k in ("text/plain", "text/markdown", "text/latex", "text/vnd.cc-notebook.plot+json", "image/png", "image/jpeg", "image/svg+xml") and isinstance(v, (str, list))}
                     for mime in list(data):
                         if mime.startswith('text/'):
                             data[mime] = data[mime][:max(0, MAX_OUTPUT - used)]

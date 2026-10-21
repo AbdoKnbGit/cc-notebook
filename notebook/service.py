@@ -36,7 +36,7 @@ class Service:
         repaired = False
         for i, c in enumerate(doc["cells"]):
             run = state["runs"].get(c["id"])
-            if run and (run.get('preview_version') != self.preview_version or any(not Path(a.get(k, '')).is_file() for a in run.get('output_assets', {}).values() for k in ('preview', 'pixels'))):
+            if run and (run.get('preview_version') != self.preview_version or any(not Path(a.get(k, '')).is_file() for a in run.get('output_assets', {}).values() for k in ('preview', 'pixels', *(['plot'] if a.get('plot') else [])))):
                 self.cache_outputs(path, run)
                 repaired = True
             current = signature(doc["cells"], i)
@@ -329,7 +329,7 @@ class Service:
 
     @property
     def preview_version(self):
-        return 'rich-1-svg' if self.rich.typst else 'rich-1'
+        return 'rich-2-svg' if self.rich.typst else 'rich-2'
 
     def cache_outputs(self, path, run):
         # Old notebook caches and evicted previews can be repaired without
@@ -346,6 +346,11 @@ class Service:
                 try:
                     decoded = base64.b64decode(png, validate=True) if png else self.rich.svg(svg.encode())
                     image, info = save_image(self.docs.workspace, output_dir, decoded)
+                    plot = data.get('text/vnd.cc-notebook.plot+json')
+                    if plot and len(plot) <= 200_000:
+                        plot_file = safe_cache(self.docs.workspace, 'outputs', output_dir.name, digest(plot)[:24] + '-plot.json')
+                        atomic_write(plot_file, plot)
+                        info['plot'] = str(plot_file)
                     run["images"].append(str(image))
                     run["image_info"][str(image)] = info
                     run["output_assets"][str(n)] = {"file": str(image), **info}

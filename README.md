@@ -69,6 +69,7 @@ To export again, choose a new filename: `/lab export ipynb notebooks/analysis-v2
 - Cell status, stale-result tracking, restart-and-run-all, interrupt, and variable inspection.
 - Inline images: native terminal graphics when supported, coloured block previews otherwise, plus links to full originals.
 - Mermaid diagrams and inline/display math in Markdown cells, with source fallbacks for unsupported syntax.
+- Transparent terminal line charts with readable axis labels when native images are unavailable. The original PNG stays available; other image types use a labelled thumbnail.
 - Ordered Python Markdown, LaTeX, PNG/JPEG and SVG output. SVG previews require optional Typst.
 - Portable Jupyter exports with embedded local Markdown image attachments.
 - Bounded, content-addressed plot previews and Jupyter export.
