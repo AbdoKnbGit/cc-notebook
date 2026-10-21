@@ -82,7 +82,7 @@ def blocks(source):
 
 class RichContent:
     def __init__(self, workspace):
-        self.workspace = workspace
+        self.workspace = Path(workspace).resolve()
         self.cache = {}
         self.typst = shutil.which("typst")
         self.failed_math = set()
@@ -169,6 +169,7 @@ class RichContent:
         return output.getvalue()
 
     def prepare(self, notebook, source, *, math=False):
+        notebook = notebook.resolve()
         if math:
             source = source.strip()
             for start, end in (('$$', '$$'), ('$', '$'), (r'\[', r'\]'), (r'\(', r'\)')):

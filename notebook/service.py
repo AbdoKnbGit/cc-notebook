@@ -33,8 +33,12 @@ class Service:
         state = self.docs.state(path)
         cells = []
         remaining_text = 250_000
+        repaired = False
         for i, c in enumerate(doc["cells"]):
             run = state["runs"].get(c["id"])
+            if run and (run.get('preview_version') != self.preview_version or any(not Path(a.get(k, '')).is_file() for a in run.get('output_assets', {}).values() for k in ('preview', 'pixels'))):
+                self.cache_outputs(path, run)
+                repaired = True
             current = signature(doc["cells"], i)
             status = "ready"
             if run:
@@ -60,6 +64,8 @@ class Service:
                         elif data.get("text/latex"):
                             output["rich"] = self.rich.prepare(path, data["text/latex"], math=True)
             cells.append({**c, "status": status, "run": visible, "rich": rich})
+        if repaired:
+            self.docs.save_state(path, state)
         return {"path": str(path), "title": doc["title"], "revision": revision, "cells": cells,
                 "kernel": {"alive": self.kernel.alive, "busy": self.kernel.busy, "id": self.kernel.id, "python": sys.executable},
                 "variables": self.kernel.variables, "activity": self.activity,
@@ -312,7 +318,23 @@ class Service:
             run = self.kernel.execute(c["source"], timeout, cancel=self.cancel)
         except Exception as error:
             run = {"status": "error", "outputs": [{"output_type": "error", "ename": type(error).__name__, "evalue": str(error), "traceback": []}], "kernel_id": self.kernel.id, "duration_ms": 0, "execution_count": None}
-        run.update(signature=signature(doc["cells"], index), at=time.time(), images=[], image_info={}, output_assets={})
+        run.update(signature=signature(doc["cells"], index), at=time.time())
+        self.cache_outputs(path, run)
+        old = state["runs"].get(c["id"])
+        if old:
+            state["history"] = [*state.get("history", []), {"cell_id": c["id"], **old}][-20:]
+        state["runs"][c["id"]] = run
+        self.docs.save_state(path, state)
+        self.record(f"Cell {index + 1}: {run['status']} · {run['duration_ms']} ms")
+
+    @property
+    def preview_version(self):
+        return 'rich-1-svg' if self.rich.typst else 'rich-1'
+
+    def cache_outputs(self, path, run):
+        # Old notebook caches and evicted previews can be repaired without
+        # executing user code or losing the original Jupyter MIME payload.
+        run.update(images=[], image_info={}, output_assets={}, preview_version=self.preview_version)
         output_dir = self.docs.state_path(path).parent
         output_dir.mkdir(parents=True, exist_ok=True)
         for n, o in enumerate(run["outputs"]):
@@ -328,12 +350,4 @@ class Service:
                     run["image_info"][str(image)] = info
                     run["output_assets"][str(n)] = {"file": str(image), **info}
                 except Exception as error:
-                    o["data"].pop("image/png", None)
-                    o["data"].pop("image/jpeg", None)
                     o["data"]["text/plain"] = f"[Plot could not be decoded: {error}]"
-        old = state["runs"].get(c["id"])
-        if old:
-            state["history"] = [*state.get("history", []), {"cell_id": c["id"], **old}][-20:]
-        state["runs"][c["id"]] = run
-        self.docs.save_state(path, state)
-        self.record(f"Cell {index + 1}: {run['status']} · {run['duration_ms']} ms")
