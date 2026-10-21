@@ -139,6 +139,8 @@ class Documents:
         return digest(text)
 
     def state_path(self, path: Path) -> Path:
+        # macOS /var aliases and Windows short paths must share one cache.
+        path = self.path(str(path))
         return safe_cache(self.workspace, "outputs", digest(str(path))[:24], "state.json")
 
     def state(self, path: Path) -> dict:

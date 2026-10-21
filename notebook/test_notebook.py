@@ -39,6 +39,21 @@ class DocumentTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 docs.save(path, {"title": "n", "cells": []}, create=True)
 
+    def test_cache_identity_uses_canonical_notebook_path(self):
+        with tempfile.TemporaryDirectory() as root:
+            docs = Documents(Path(root))
+            path = docs.path("n.nb.md")
+            docs.save(path, {"title": "n", "cells": []}, create=True)
+            state = {"runs": {}, "history": [], "marker": "saved"}
+            docs.save_state(path, state)
+            (Path(root) / "sub").mkdir()
+            alias = Path(root) / "sub" / ".." / "n.nb.md"
+            self.assertEqual(docs.state_path(alias), docs.state_path(path))
+            self.assertEqual(docs.state(alias), state)
+            self.assertEqual(docs.state(Path(root) / "n.nb.md"), state)
+            with self.assertRaises(ValueError):
+                docs.state_path(Path(root) / ".." / "outside.nb.md")
+
 
 class KernelIntegrationTests(unittest.TestCase):
     @classmethod
