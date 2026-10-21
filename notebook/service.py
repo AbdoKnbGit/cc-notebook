@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 import sys
 import threading
 import time
@@ -11,6 +12,7 @@ from pathlib import Path
 from document import Documents, atomic_write, cell, digest, export_ipynb, signature
 from kernel import Kernel
 from storage import safe_cache, file_lock
+from rich import RichContent
 
 
 class Service:
@@ -21,6 +23,7 @@ class Service:
         self.lock = threading.Lock()
         self.cancel = threading.Event()
         self.activity = []
+        self.rich = RichContent(self.docs.workspace)
 
     def record(self, text):
         self.activity = [*self.activity[-19:], {"at": time.time(), "text": text}]
@@ -47,7 +50,16 @@ class Service:
             visible = self.public_run(run, min(12000, remaining_text)) if run else None
             if visible:
                 remaining_text = max(0, remaining_text - len(json.dumps(visible["outputs"])))
-            cells.append({**c, "status": status, "run": visible})
+            rich = self.rich.prepare(path, c["source"]) if c["type"] == "markdown" else None
+            if visible:
+                for output in visible["outputs"]:
+                    data = output.get("data", {})
+                    if not output.get("asset"):
+                        if data.get("text/markdown"):
+                            output["rich"] = self.rich.prepare(path, data["text/markdown"])
+                        elif data.get("text/latex"):
+                            output["rich"] = self.rich.prepare(path, data["text/latex"], math=True)
+            cells.append({**c, "status": status, "run": visible, "rich": rich})
         return {"path": str(path), "title": doc["title"], "revision": revision, "cells": cells,
                 "kernel": {"alive": self.kernel.alive, "busy": self.kernel.busy, "id": self.kernel.id, "python": sys.executable},
                 "variables": self.kernel.variables, "activity": self.activity,
@@ -56,17 +68,22 @@ class Service:
     @staticmethod
     def public_run(run, budget=12000):
         # Binary images stay on disk, never serialized as text into model context.
-        result = {k: v for k, v in run.items() if k != "outputs"}
+        result = {k: v for k, v in run.items() if k not in ("outputs", "output_assets")}
         result["images"] = run.get("images", [])[-6:]
         result["image_info"] = {p: info for p, info in run.get("image_info", {}).items() if p in result["images"]}
         result["outputs"] = []
-        for o in run["outputs"]:
+        for index, o in enumerate(run["outputs"]):
             if budget <= 0:
                 result["outputs"].append({"output_type": "stream", "name": "stderr", "text": "[Preview truncated. Full output is retained in the cache and .ipynb export.]"})
                 break
             copy = {**o}
             if "data" in copy:
-                copy["data"] = {k: v[:budget] for k, v in copy["data"].items() if k == "text/plain"}
+                copy["data"] = {k: v[:budget] for k, v in copy["data"].items() if k in ("text/plain", "text/markdown", "text/latex")}
+            asset = run.get("output_assets", {}).get(str(index))
+            if asset:
+                copy["asset"] = asset
+            elif 'image/svg+xml' in o.get('data', {}):
+                copy.setdefault('data', {}).setdefault('text/plain', '[SVG output retained in Jupyter export. PNG/JPEG previews are supported here.]')
             for key in ("text", "evalue"):
                 if key in copy:
                     copy[key] = copy[key][:budget]
@@ -94,6 +111,8 @@ class Service:
             raise ValueError("Notebook is busy. Interrupt it or wait for the current operation.")
         try:
             name = request.get("path") or (None if action == "import" else self.active)
+            if action == 'demo':
+                name = request.get('path') or 'notebooks/visual-lab.nb.md'
             if action == "new":
                 name = name or "notebooks/untitled.nb.md"
             if action == "import":
@@ -109,6 +128,8 @@ class Service:
     def _handle(self, r):
         action = r.get("action", "status")
         name = r.get("path") or (None if action == "import" else self.active)
+        if action == 'demo':
+            name = r.get('path') or 'notebooks/visual-lab.nb.md'
         if action == "shutdown":
             self.kernel.stop()
             return {"message": "Kernel stopped."}
@@ -118,6 +139,21 @@ class Service:
                 raise ValueError("Use a .nb.md extension for notebook source.")
             doc = {"title": r.get("title") or path.name.removesuffix(".nb.md"), "cells": [cell("markdown", "# A new experiment\n\nWrite your question here."), cell("python", "# Load data once; variables stay alive across cells.\nx = 41\nx + 1"), cell("ai", "Explain the result of the Python cell above.")]}
             self.docs.save(path, doc, create=True)
+            name = str(path)
+        if action == 'demo':
+            source = Path(__file__).resolve().parents[1] / 'examples' / 'visual-lab.nb.md'
+            path = self.docs.path(name or 'notebooks/visual-lab.nb.md')
+            from document import parse, atomic_write_bytes
+            doc = parse(source.read_text(encoding='utf-8'))
+            # Reopening a demo preserves any experiments the user already saved.
+            if not path.exists():
+                data = (source.parent / 'assets' / 'decay.png').read_bytes()
+                asset = self.docs.path(str(path.parent / 'assets' / ('decay-' + digest(base64.b64encode(data).decode())[:12] + '.png')))
+                if not asset.exists():
+                    atomic_write_bytes(asset, data)
+                for c in doc['cells']:
+                    c['source'] = c['source'].replace('assets/decay.png', 'assets/' + asset.name)
+                self.docs.save(path, doc, create=True)
             name = str(path)
         if action == "import":
             import nbformat
@@ -135,13 +171,21 @@ class Service:
                 if meta.get("type") == "ai":
                     kind = "ai"
                     source_text = source_text.removeprefix("**AI instruction (saved, not executed)**\n\n")
+                if kind == 'markdown' and c.get('attachments'):
+                    from images import save_image
+                    folder = safe_cache(self.docs.workspace, 'imports', digest(str(path))[:24])
+                    for attachment, data in c.attachments.items():
+                        encoded = data.get('image/png') or data.get('image/jpeg') or data.get('image/webp')
+                        if encoded:
+                            image, _ = save_image(self.docs.workspace, folder, base64.b64decode(encoded, validate=True), category='imports')
+                            source_text = source_text.replace('attachment:' + attachment, image.as_posix().replace(' ', '%20'))
                 doc["cells"].append(cell(kind, source_text))
             self.docs.save(path, doc, create=True)
         if not name:
             raise ValueError("Open or create a notebook first: /lab new notebooks/analysis.nb.md")
         path, doc, revision = self.docs.load(name)
         if self.active and self.active != str(path):
-            if action not in ("open", "new", "import"):
+            if action not in ("open", "new", "import", "demo"):
                 raise ValueError("Open this notebook before modifying or running it.")
             self.kernel.stop()
         self.active = str(path)
@@ -179,9 +223,10 @@ class Service:
                 if c.get("generated_from") == target["id"]:
                     continue
                 item = {k: c[k] for k in ("id", "type", "source", "status")}
-                item["source"] = item["source"][:6000]
+                redact = lambda text: re.sub(r'data:image/[\w.+-]+;base64,[A-Za-z0-9+/=]+', '[embedded image omitted]', text)
+                item["source"] = redact(item["source"])[:6000]
                 if c.get("run"):
-                    item["output"] = json.dumps(c["run"]["outputs"], ensure_ascii=False)[:3000]
+                    item["output"] = redact(json.dumps(c["run"]["outputs"], ensure_ascii=False))[:3000]
                 context.append(item)
             return {"prompt": target["source"], "context": context[-12:], "variables": self.kernel.variables, "revision": revision, "context_key": self.context_signature(doc, target, state)}
         elif action == "apply_generation":
@@ -231,7 +276,7 @@ class Service:
             if destination == path or destination.exists():
                 raise ValueError("Export destination already exists. Choose a new filename.")
             if format_ == "ipynb":
-                content = export_ipynb(doc, state, self.kernel.id)
+                content = export_ipynb(doc, state, self.kernel.id, lambda source: self.rich.embed(path, source))
             elif format_ == "markdown":
                 chunks = ["# " + doc["title"]]
                 for c in self.view(name)["cells"]:
@@ -249,7 +294,7 @@ class Service:
                 raise ValueError("Export format must be ipynb or markdown.")
             atomic_write(destination, content)
             return {"destination": str(destination), "message": "Exported notebook."}
-        elif action not in ("status", "open", "new", "import"):
+        elif action not in ("status", "open", "new", "import", "demo"):
             raise ValueError("Unknown notebook operation.")
         if action in ("add", "update", "remove", "move", "apply_generation"):
             self.docs.save(path, doc, revision)
@@ -267,19 +312,24 @@ class Service:
             run = self.kernel.execute(c["source"], timeout, cancel=self.cancel)
         except Exception as error:
             run = {"status": "error", "outputs": [{"output_type": "error", "ename": type(error).__name__, "evalue": str(error), "traceback": []}], "kernel_id": self.kernel.id, "duration_ms": 0, "execution_count": None}
-        run.update(signature=signature(doc["cells"], index), at=time.time(), images=[], image_info={})
+        run.update(signature=signature(doc["cells"], index), at=time.time(), images=[], image_info={}, output_assets={})
         output_dir = self.docs.state_path(path).parent
         output_dir.mkdir(parents=True, exist_ok=True)
         for n, o in enumerate(run["outputs"]):
-            png = o.get("data", {}).get("image/png")
-            if png:
-                from images import save_plot
+            data = o.get('data', {})
+            png = data.get("image/png") or data.get("image/jpeg")
+            svg = data.get('image/svg+xml')
+            if png or svg:
+                from images import save_image
                 try:
-                    image, info = save_plot(self.docs.workspace, output_dir, png)
+                    decoded = base64.b64decode(png, validate=True) if png else self.rich.svg(svg.encode())
+                    image, info = save_image(self.docs.workspace, output_dir, decoded)
                     run["images"].append(str(image))
                     run["image_info"][str(image)] = info
-                except (ValueError, OSError) as error:
+                    run["output_assets"][str(n)] = {"file": str(image), **info}
+                except Exception as error:
                     o["data"].pop("image/png", None)
+                    o["data"].pop("image/jpeg", None)
                     o["data"]["text/plain"] = f"[Plot could not be decoded: {error}]"
         old = state["runs"].get(c["id"])
         if old:

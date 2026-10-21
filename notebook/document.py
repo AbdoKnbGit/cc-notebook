@@ -157,13 +157,14 @@ class Documents:
         for run in sorted(state["runs"].values(), key=lambda r: r.get("at", 0)):
             if len(json.dumps(state)) <= 64_000_000:
                 break
-            run.update(status="evicted", outputs=[{"output_type": "stream", "name": "stderr", "text": "[Output evicted by the 64 MB notebook cache limit. Rerun this cell.]"}], images=[], image_info={})
+            run.update(status="evicted", outputs=[{"output_type": "stream", "name": "stderr", "text": "[Output evicted by the 64 MB notebook cache limit. Rerun this cell.]"}], images=[], image_info={}, output_assets={})
         target = self.state_path(path)
         atomic_write(target, json.dumps(state, ensure_ascii=False))
-        kept = {Path(p).name for run in [*state["runs"].values(), *state.get("history", [])] for p in [*run.get("images", []), *[i["preview"] for i in run.get("image_info", {}).values()]]}
+        kept = {Path(p).name for run in [*state["runs"].values(), *state.get("history", [])] for p in [*run.get("images", []), *[i[k] for i in run.get("image_info", {}).values() for k in ('preview', 'pixels') if i.get(k)]]}
         # Never recurse, follow links, or remove files the notebook did not name.
         for entry in target.parent.iterdir():
-            if re.fullmatch(r"[0-9a-f]{24}(?:-preview)?\.png", entry.name) and entry.name not in kept and not entry.is_symlink() and entry.is_file():
+            if re.fullmatch(r"[0-9a-f]{24}(?:-preview\.png|-pixels\.json|\.png)", entry.name) and entry.name not in kept and not entry.is_symlink() and entry.is_file():
+                safe_cache(self.workspace, 'outputs', target.parent.name, entry.name)
                 entry.unlink()
 
 
@@ -173,7 +174,7 @@ def signature(cells: list[dict], index: int) -> str:
     return digest(json.dumps(cells[:index + 1], sort_keys=True, ensure_ascii=False))
 
 
-def export_ipynb(doc: dict, state: dict, current_kernel: str | None) -> str:
+def export_ipynb(doc: dict, state: dict, current_kernel: str | None, embed=None) -> str:
     import nbformat
     book = nbformat.v4.new_notebook()
     book.metadata["kernelspec"] = {"display_name": "Python 3", "language": "python", "name": "python3"}
@@ -192,6 +193,8 @@ def export_ipynb(doc: dict, state: dict, current_kernel: str | None) -> str:
         else:
             source = c["source"] if c["type"] == "markdown" else "**AI instruction (saved, not executed)**\n\n" + c["source"]
             n = nbformat.v4.new_markdown_cell(source, metadata=meta, id=c["id"])
+            if embed and c['type'] == 'markdown':
+                n.source, n.attachments = embed(source)
         book.cells.append(n)
     nbformat.validate(book)
     return nbformat.writes(book)

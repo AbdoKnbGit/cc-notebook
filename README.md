@@ -16,13 +16,13 @@ python scripts/start_lab.py
 Then in Claude Code:
 
 ```text
-/lab open examples/first-experiment.nb.md
-/lab run 2
+/lab demo
+/lab select 2
 /lab run 3
-/lab generate 4
+/lab generate 5
 ```
 
-Cell 2 builds a small synthetic DataFrame. Cell 3 uses the same Python variables to plot conversion rates. Cell 4 asks Claude to add an explanation and follow-up cells. Generation makes a separate request through Claude Code using your session's model and authentication; it may incur API charges. Generated Python is saved for review and does not execute automatically.
+The visual demo combines explanations, Mermaid, equations and an inline image. Cell 3 runs a reproducible Python experiment and displays its Markdown, equation, plot and printed result in order. Cell 5 asks Claude to add an explanation and follow-up cells. Generation makes a separate request through Claude Code using your session's model and authentication; it may incur API charges. Generated Python is saved for review and does not execute automatically.
 
 Use `/lab doctor` if Python dependencies are missing. On macOS or Linux, use `python3` if `python` is not installed. Running the launcher from a virtual environment selects that environment's Python.
 
@@ -50,7 +50,7 @@ Restart Claude Code if prompted, then create a notebook:
 /lab generate 3
 ```
 
-The example files belong to the repository checkout; a plugin install does not copy them into your project. `/lab new` creates a starter with Markdown, Python, and an AI instruction cell.
+`/lab demo` copies the bundled visual example into your project and preserves subsequent edits. `/lab new` creates a small starter with Markdown, Python, and an AI instruction cell.
 
 ## Open it in Jupyter
 
@@ -67,7 +67,10 @@ To export again, choose a new filename: `/lab export ipynb notebooks/analysis-v2
 - Markdown, Python, and AI instruction cells in one .nb.md notebook.
 - A persistent local IPython kernel for shared variables.
 - Cell status, stale-result tracking, restart-and-run-all, interrupt, and variable inspection.
-- Matplotlib plot outputs as Claude Code native images on supported surfaces, with saved-path fallback elsewhere.
+- Inline images: native terminal graphics when supported, coloured block previews otherwise, plus links to full originals.
+- Mermaid diagrams and inline/display math in Markdown cells, with source fallbacks for unsupported syntax.
+- Ordered Python Markdown, LaTeX, PNG/JPEG and SVG output. SVG previews require optional Typst.
+- Portable Jupyter exports with embedded local Markdown image attachments.
 - Bounded, content-addressed plot previews and Jupyter export.
 
 See the [notebook guide](docs/notebook.md) for commands, the file format, portability, cache behavior, and development details.

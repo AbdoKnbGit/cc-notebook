@@ -1,10 +1,10 @@
 # Lab notebook
 
-cc-notebook is a standalone Claude Code plugin for Markdown, persistent Python, and AI instruction cells. It adds a live execution feed, variable inspection, bounded output caching, and Jupyter export.
+`/lab` adds Markdown, persistent Python, AI instruction cells, session cost and Jupyter export. This standalone package includes only the notebook and its rendering dependencies.
 
 ## Start locally
 
-Requires Python 3.10+ and Claude Code with function hooks (tested with 2.1.303). The notebook bridge uses Python and Jupyter APIs on Windows, macOS, and Linux; it does not invoke `sh`, `sips`, `osascript`, `perl`, or ImageMagick. The notebook UI uses Claude Code's native Markdown and image components.
+Requires Python 3.10+ and Claude Code with function hooks (tested with 2.1.305). The notebook bridge uses Python and Jupyter APIs on Windows, macOS, and Linux; it does not invoke `sh`, `sips`, `osascript`, `perl`, or ImageMagick.
 
 ```sh
 python -m pip install -r notebook/requirements.txt
@@ -24,12 +24,14 @@ Inside Claude Code:
 
 The demo data is synthetic and runs without network access. Generation uses the session's configured model and can incur API charges. Generated Python is saved for review and only runs when you choose Run.
 
+To enable the notebook for ordinary `claude` launches **in this project**, run `python scripts/install_local.py` once. After source edits, use the direct launcher or refresh the local plugin install; an installed copy is a snapshot. Project-local settings are ignored by Git.
 
 ## Controls
 
 | Command | Behavior |
 | --- | --- |
 | `/lab` | Open the notebook pane, restoring the last path if available |
+| `/lab demo` | Create or reopen the visual lab, preserving edits |
 | `/lab new notebooks/name.nb.md` | Create a notebook without overwriting an existing file |
 | `/lab open <path>` | Open a saved notebook; switching notebooks stops the previous kernel |
 | `/lab select N`, `/lab run N` | Select or execute a Python cell by number |
@@ -42,7 +44,7 @@ The demo data is synthetic and runs without network access. Generation uses the 
 | `/lab export markdown [path]` | Export a local report with links to cached plots |
 | `/lab import <file.ipynb>` | Import sources into a new `.nb.md`; old execution outputs are not imported |
 
-The pane has cell editing, reordering, deletion, execution, generation, and variable controls. Markdown cells use Claude Code's native Markdown renderer. Save/cancel a draft before changing cells. A disk conflict keeps the draft. Cancel or copy the draft before refreshing. Notebook source and export paths must remain inside the current workspace.
+The pane has cell editing, reordering, deletion, execution, generation, and variable controls. Save/cancel a draft before changing cells. A disk conflict keeps the draft. Cancel or copy the draft before refreshing. Notebook source and export paths must remain inside the current workspace.
 
 Claude can use the registered `notebook` tool to read, edit, and run cells. Mutating tool calls honor the session permission verdict. Python runs with the permissions of the selected local interpreter, as ordinary Jupyter does; it is not a sandbox. Cells can access the local filesystem and network when explicitly run.
 
@@ -72,7 +74,7 @@ Editing, moving, or deleting upstream cells marks downstream results stale. Reru
 
 Plots render through Claude Code's native `Image` element, both in the notebook pane and the notebook tool's transcript result. DataFrames use their text representation. HTML, JavaScript widgets, and interactive Plotly output are not executed; use matplotlib or display an exported PNG.
 
-Terminal image support depends on the host and terminal graphics protocol. Supported terminals get inline previews; unsupported terminals retain text and a saved plot path. Desktop/VS Code surfaces receive the same image element where available. Native Windows Terminal currently uses the saved-path fallback. SSH sends a bounded PNG preview instead of a path the remote terminal cannot read. Resizing changes the image generation so a terminal can rescale it. There is no raw terminal-escape injection.
+Terminal image support depends on the host and terminal graphics protocol. Supported terminals get native images; other terminals, including Windows Terminal, get lower-resolution coloured block previews through Raster. Desktop/VS Code surfaces receive native images only where the host exposes that component, with the original path otherwise. SSH sends a bounded PNG preview instead of a path the remote terminal cannot read. Resizing changes the image generation so a terminal can rescale it. There is no raw terminal-escape injection.
 
 Plots are immutable files addressed by their contents. Originals stay separate from previews. Pillow preserves aspect ratio and makes previews at most 2048 pixels per side and under 1.9 MB, within the host's 2 MiB byte limit. The small SSH memory cache holds at most three previews. Missing or invalid images fall back to text. Base64 is excluded from tool results and AI context; Claude can explicitly read a saved plot to inspect it.
 
@@ -86,11 +88,28 @@ Notebook changes do not rewrite the main Claude conversation or system prompt on
 
 ```sh
 npm ci
-npm run test:plugin
+npm run build
 npm test
 npm run validate
 ```
 
-Claude Code generates the plugin types when it loads the plugin. Run npm run test:plugin for the UI and hook suite, npm test for Python/kernel/bridge integration tests, and npm run validate to check the manifest. The automated tests do not make a paid model request.
+Claude generates `.claude-plugin/types/` when it loads the plugin. Launch it once before the first TypeScript build. `npm test` runs actual Python/kernel/bridge integration tests. `npm run test:plugin` tests the notebook UI under Claude Code. No paid model request is required by the automated suite.
 
-The image transport and resize-generation design was informed by [claude-show-your-work](https://github.com/iamumeransari/claude-show-your-work).
+The design borrows file-versus-SSH image transport and resize generation ideas from [show-your-work](https://github.com/iamumeransari/claude-show-your-work). See [attribution](../THIRD_PARTY_NOTICES.md).
+## Visual notebook
+
+Run `/lab demo` to create or reopen `notebooks/visual-lab.nb.md`. It preserves edits if the demo already exists. Cell 1 has an explanation, Mermaid diagram and equation; cell 2 has an image; `/lab run 3` produces live Python rich output. `/lab generate 5` makes a model request and saves proposed cells without running them.
+
+Markdown cells support local PNG/JPEG/WebP/GIF images, closed Mermaid fences, inline `$math$`/`\(math\)` and display `$$math$$`/`\[math\]`. Put image paths with spaces in angle brackets: `![plot](<assets/my plot.png>)`. Paths resolve relative to the notebook, inside its workspace. Remote images are not downloaded. Use Refresh after changing an image on disk.
+
+Python output preserves text, Markdown, LaTeX, PNG, JPEG and SVG in execution order. One representation is selected for each output, so a plot does not also show its Python object description. HTML and JavaScript widgets are not executed.
+
+Native images use Claude Code's Image component on supported terminals. Other terminals use coloured half-block previews through Raster, with an Open original image link for full detail. These previews have lower resolution than native images. Desktop/VS Code image support depends on the host's available components; the saved path remains available. SSH uses bounded PNG bytes instead of inaccessible local paths.
+
+Mermaid uses the vendored `beautiful-mermaid` 1.1.3 text renderer: flowchart, state, sequence, class, ER and XY diagrams. Wide horizontal flowcharts retry vertically. Unsupported syntax, complex/oversized input and labels with unsupported terminal widths remain source code. The original Mermaid source stays editable and is preserved in `.ipynb`; Jupyter frontend support for rendering that source varies.
+
+Math uses Unicode notation when native images are unavailable. Typeset display equations use installed Typst/MiTeX, with Matplotlib MathText as a fallback; unsupported expressions retain their source. Typst may download its pinned MiTeX package on first use. Dark/light equation variants follow Claude's theme. This is mathematical notation, not a general LaTeX document compiler. Static self-contained SVG previews require Typst; SVG source is retained in Jupyter export even without it.
+
+Image and equation previews live under `.claude-notebook/`, keyed by full content hashes. Images are limited to 8 MB and 24 million decoded pixels; native previews are at most 1.9 MB. Each notebook's rich preview directory is capped at 64 MB. In-memory image, diagram and formula caches are bounded; binary pixels are not included in model context. Refresh recreates evicted previews.
+
+`.ipynb` export embeds local Markdown images as attachments and preserves rich Python MIME output. Import restores supported image attachments into workspace storage without executing cells. Local image links in Markdown report export still refer to files; use `.ipynb` for a portable single-file notebook.

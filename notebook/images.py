@@ -1,6 +1,7 @@
 """Immutable PNG originals plus bounded previews usable across SSH."""
 import base64
 import io
+import json
 import warnings
 from pathlib import Path
 from document import digest, atomic_write_bytes
@@ -8,10 +9,13 @@ from storage import safe_cache
 
 
 def save_plot(workspace, folder, encoded):
+    return save_image(workspace, folder, base64.b64decode(encoded, validate=True))
+
+
+def save_image(workspace, folder, data, *, category="outputs"):
     from PIL import Image
-    data = base64.b64decode(encoded, validate=True)
-    if not data.startswith(b"\x89PNG\r\n\x1a\n"):
-        raise ValueError("Expected PNG data.")
+    if len(data) > 8_000_000:
+        raise ValueError("Image exceeds 8 MB.")
     with warnings.catch_warnings():
         warnings.simplefilter("error", Image.DecompressionBombWarning)
         try:
@@ -21,9 +25,16 @@ def save_plot(workspace, folder, encoded):
             source.load()
         except (Image.DecompressionBombError, Image.DecompressionBombWarning) as error:
             raise ValueError("Plot dimensions exceed the preview limit.") from error
-    prefix = digest(encoded)[:24]
-    image = safe_cache(workspace, "outputs", folder.name, prefix + ".png")
-    preview = safe_cache(workspace, "outputs", folder.name, prefix + "-preview.png")
+    from PIL import ImageOps
+    source = ImageOps.exif_transpose(source).convert("RGBA")
+    normalized = io.BytesIO()
+    source.save(normalized, format="PNG")
+    data = normalized.getvalue()
+    if len(data) > 32_000_000:
+        raise ValueError("Decoded image exceeds the 32 MB saved-image limit. Resize it first.")
+    prefix = digest(base64.b64encode(data).decode())[:24]
+    image = safe_cache(workspace, category, folder.name, prefix + ".png")
+    preview = safe_cache(workspace, category, folder.name, prefix + "-preview.png")
     # Content-addressed files are never rewritten after creation.
     if not image.exists() or image.read_bytes() != data:
         atomic_write_bytes(image, data)
@@ -37,4 +48,10 @@ def save_plot(workspace, folder, encoded):
         thumb.thumbnail((max(1, thumb.width // 2), max(1, thumb.height // 2)))
     if not preview.exists() or preview.read_bytes() != buf.getvalue():
         atomic_write_bytes(preview, buf.getvalue())
-    return image, {"width": source.width, "height": source.height, "preview": str(preview), "preview_width": thumb.width, "preview_height": thumb.height}
+    preview_width, preview_height = thumb.size
+    pixels = safe_cache(workspace, category, folder.name, prefix + "-pixels.json")
+    thumb.thumbnail((96, 96))
+    packed = json.dumps({"width": thumb.width, "height": thumb.height, "rgba": thumb.tobytes().hex()}).encode()
+    if not pixels.exists() or pixels.read_bytes() != packed:
+        atomic_write_bytes(pixels, packed)
+    return image, {"width": source.width, "height": source.height, "preview": str(preview), "preview_width": preview_width, "preview_height": preview_height, "pixels": str(pixels)}

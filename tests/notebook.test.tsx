@@ -1,6 +1,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 import { commandOf, parseGenerated, TOOL, PANE } from '../hooks/notebook/model'
 import { fitPlot, plotSource, clearImageCache } from '../hooks/notebook/images'
+import { diagram, inlineMath, mathText, raster, imageUri } from '../hooks/notebook/rich'
 
 const CMD = { origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 100 } } as const
 const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aL1sAAAAASUVORK5CYII='
@@ -14,7 +15,7 @@ const sample = () => ({ path: '/work/notebook.nb.md', revision: 'r1', title: 'Ex
 
 function world(on: any, options: { answer?: string; deny?: boolean; failedSave?: boolean; env?: Record<string, string> } = {}) {
   mock.store(on)
-  mock.clock(on)
+  const clock = mock.clock(on)
   mock.env(on, { DISABLE_AUTOUPDATER: '1', ...options.env })
   on('session.cwd', () => ({ value: '/work' }))
   on('session.id', () => ({ value: 'test-session' }))
@@ -47,7 +48,7 @@ function world(on: any, options: { answer?: string; deny?: boolean; failedSave?:
     }
     return { value: { exitCode: 0, stdout: JSON.stringify(error ? { ok: false, error } : { ok: true, result }), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
   })
-  return { view, calls, prompts }
+  return { view, calls, prompts, clock }
 }
 
 test('notebook command preserves quoted Windows paths and validates AI JSON', () => {
@@ -181,4 +182,122 @@ test('plot fitting respects narrow windows, tall plots and resize generations', 
   expect(reads).toBe(1)
   fake.fs.stat = async () => ({ kind: 'file', size: 3_000_000 })
   expect(await plotSource(fake, '/large.png', { columns: 40, rows: 10 }, true)).toBe(null)
+})
+
+test('Mermaid fits a narrow pane and keeps unsupported diagrams as source', () => {
+  const art = diagram('graph LR\n A[Question] --> B[Experiment]\n B --> C[Result]', 24)
+  expect(art).not.toBe(null)
+  expect(art!.split('\n').every(line => line.length <= 24)).toBe(true)
+  expect(art).toContain('Experiment')
+  expect(diagram('not-a-diagram', 80)).toBe(null)
+  expect(diagram('graph TD\n A --> B' + 'x'.repeat(5000), 80)).toBe(null)
+  expect(diagram('graph TD\n A[😀] --> B', 80)).toBe(null)
+})
+
+test('math preserves code, currency and unsupported commands', () => {
+  expect(mathText('E = mc^2')).toBe('E = mc²')
+  expect(mathText('\\frac{1}{2} + \\alpha')).toBe('(1)/(2) + α')
+  expect(mathText('\\unsupported{x}')).toBe('\\unsupported{x}')
+  expect(inlineMath('Costs $5 and $10. `$x^2$` and $x^2$')).toBe('Costs $5 and $10. `$x^2$` and x²')
+  expect(inlineMath('```python\nprint("$x^2$")\n```')).toContain('$x^2$')
+  expect(inlineMath('![test](plot.png) and \\(x^2\\)')).toBe('![test](plot.png) and x²')
+  expect(imageUri('C:\\my work\\plot #1.png')).toBe('file:///C:/my%20work/plot%20%231.png')
+})
+
+test('Raster encoding is bounded and transparent pixels follow the theme', () => {
+  const pixels = { width: 1, height: 2, rgba: 'ff0000ff00000000' }
+  const dark = raster(pixels, 1, 1, false)
+  const light = raster(pixels, 1, 1, true)
+  expect(dark?.length).toBe(16)
+  expect(dark).not.toBe(light)
+  expect(raster(pixels, 0, 1, false)).toBe(null)
+  expect(raster({ ...pixels, rgba: 'bad' }, 10, 10, false)).toBe(null)
+})
+
+test('Windows fallback draws an inline Raster in output order without leaking pixels into model replies', async ($, on) => {
+  const w = world(on, { env: { OS: 'Windows_NT', TERM_PROGRAM: 'Windows_Terminal' } })
+  const asset = { file: '/work/plot.png', preview: '/work/preview.png', pixels: '/work/pixels.json', width: 100, height: 50, preview_width: 100, preview_height: 50 }
+  w.view.cells[1].run = { outputs: [
+    { output_type: 'stream', text: 'Before image' },
+    { output_type: 'display_data', asset, data: { 'text/plain': '<Figure>' } },
+    { output_type: 'stream', text: 'After image' },
+  ], images: [asset.file], image_info: { [asset.file]: asset }, duration_ms: 1, at: 1 }
+  on('fs.stat', () => ({ value: { kind: 'file', size: 100, mtimeMs: 1, isLink: false } }))
+  on('fs.read', () => ({ value: JSON.stringify({ width: 1, height: 2, rgba: 'ff0000ff0000ffff' }) }))
+  await ($ as any).session.start({ source: 'startup', cwd: '/work' })
+  const reply = await $.tool.call({ tool: TOOL, action: 'open', path: '/work/notebook.nb.md' } as never)
+  expect(JSON.stringify(reply)).not.toContain('ff0000ff0000ffff')
+  await run($, 'select 2')
+  const ui = await mount($)
+  const drawing = JSON.stringify(await ui.drawn())
+  expect(await ui.find({ type: 'Raster' })).toBeDefined()
+  expect(await ui.find({ type: 'Link', text: 'Open original image' })).toBeDefined()
+  expect(drawing.indexOf('Before image')).toBeLessThan(drawing.indexOf('Raster'))
+  expect(drawing.indexOf('Raster')).toBeLessThan(drawing.indexOf('After image'))
+  expect(drawing).not.toContain('<Figure>')
+  await ui.unmount()
+})
+
+test('Markdown cells show explanation, Mermaid and readable equations together', async ($, on) => {
+  const w = world(on)
+  w.view.cells[0].rich = [
+    { kind: 'markdown', text: '# The experiment\n\nEnergy is $E=mc^2$.' },
+    { kind: 'mermaid', text: 'graph TD\n A[Question] --> B[Experiment]' },
+    { kind: 'math', text: 'E=mc^2' },
+  ]
+  await ($ as any).session.start({ source: 'startup', cwd: '/work' })
+  await run($, 'new n.nb.md')
+  const ui = await mount($)
+  expect(await ui.find({ type: 'Markdown', text: /Energy is E=mc²/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /Question/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^E=mc²$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Code' })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('supported terminal uses the light equation preview when the host theme is light', async ($, on) => {
+  const w = world(on, { env: { TERM_PROGRAM: 'ghostty' } })
+  const asset = { file: '/work/light.png', preview: '/work/light-preview.png', width: 80, height: 20, preview_width: 80, preview_height: 20 }
+  w.view.cells[0].rich = [{ kind: 'math', text: 'x^2', light: asset, dark: { ...asset, preview: '/work/dark.png' } }]
+  on('config.list', () => ({ value: [{ key: 'theme', value: 'light' }] } as any))
+  on('fs.stat', () => ({ value: { kind: 'file', size: 100, mtimeMs: 1, isLink: false } }))
+  await ($ as any).session.start({ source: 'startup', cwd: '/work' })
+  await run($, 'new n.nb.md')
+  const ui = await mount($)
+  const image: any = await ui.find({ type: 'Image' })
+  expect(image?.props.source.file).toBe('/work/light-preview.png')
+  await ui.unmount()
+})
+
+test('native image refusal switches to Raster after the mounted capability probe', async ($, on) => {
+  const w = world(on, { env: { TERM_PROGRAM: 'ghostty' } })
+  const asset = { file: '/work/probe.png', preview: '/work/probe-preview.png', pixels: '/work/probe-pixels.json', width: 10, height: 10, preview_width: 10, preview_height: 10 }
+  w.view.cells[0].rich = [{ kind: 'image', text: 'Probe', asset }]
+  on('fs.stat', () => ({ value: { kind: 'file', size: 100, mtimeMs: 1, isLink: false } }))
+  on('fs.read', () => ({ value: JSON.stringify({ width: 1, height: 1, rgba: 'ff0000ff' }) }))
+  on('ui.blit', () => ({ value: { deny: 'Image draws only alt text on this terminal' } }))
+  await ($ as any).session.start({ source: 'startup', cwd: '/work' })
+  await run($, 'new n.nb.md')
+  const ui = await mount($)
+  expect(await ui.find({ type: 'Image' })).toBeDefined()
+  await w.clock.advance(300)
+  await w.clock.settle()
+  await ui.redraw({ title: 'Lab', isFocused: true, bodyColumns: 80, placement: 'dock', scroll: { offset: 0, bodyRows: 30 }, view: {} } as any)
+  expect(await ui.find({ type: 'Raster' })).toBeDefined()
+  expect(await ui.find({ type: 'Image' })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('completed Python cells can expand their source without rerunning', async ($, on) => {
+  const w = world(on)
+  w.view.cells[1].source = 'a = 1\nb = 2\nc = 3\nlast_line = a + b + c'
+  w.view.cells[1].run = { outputs: [{ output_type: 'stream', text: '6' }], images: [], duration_ms: 1, at: 1 }
+  await run($, 'new n.nb.md')
+  await run($, 'select 2')
+  const ui = await mount($)
+  expect((await ui.find({ type: 'Code' }))?.props.source).not.toContain('last_line')
+  await ui.press({ key: 'lab-code-toggle' })
+  expect((await ui.find({ type: 'Code' }))?.props.source).toContain('last_line')
+  expect(w.calls.some(c => c.action === 'run')).toBe(false)
+  await ui.unmount()
 })

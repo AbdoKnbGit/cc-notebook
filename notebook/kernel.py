@@ -156,11 +156,12 @@ class Kernel:
                     out = {"output_type": "error", "ename": content.get("ename", "Error"), "evalue": content.get("evalue", "")[:4000], "traceback": content.get("traceback", [])[-20:]}
                 elif kind in ("display_data", "execute_result", "update_display_data"):
                     # Static output only: HTML/JS widgets are not executed in a TUI.
-                    data = {k: v for k, v in content.get("data", {}).items() if k in ("text/plain", "image/png")}
-                    if "text/plain" in data:
-                        data["text/plain"] = data["text/plain"][:max(0, MAX_OUTPUT - used)]
-                        used += len(data["text/plain"])
-                    image_bytes += len(data.get("image/png", ""))
+                    data = {k: ''.join(v) if isinstance(v, list) else v for k, v in content.get("data", {}).items() if k in ("text/plain", "text/markdown", "text/latex", "image/png", "image/jpeg", "image/svg+xml") and isinstance(v, (str, list))}
+                    for mime in list(data):
+                        if mime.startswith('text/'):
+                            data[mime] = data[mime][:max(0, MAX_OUTPUT - used)]
+                            used += len(data[mime])
+                    image_bytes += sum(len(v) for k, v in data.items() if k.startswith('image/'))
                     if image_bytes > MAX_IMAGE:
                         data = {"text/plain": "[Plots exceeded this cell's 8 MB image budget. Reduce figure size or split the cell.]"}
                     out = {"output_type": "execute_result" if kind == "execute_result" else "display_data", "data": data, "metadata": {}}
