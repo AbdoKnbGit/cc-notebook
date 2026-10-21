@@ -17,3 +17,8 @@ jobs:
           cache-dependency-path: notebook/requirements.txt
       - run: python -m pip install -r notebook/requirements.txt
       - run: python -m unittest discover -s notebook -p "test_*.py" -v
+      - name: Check first-use setup and reuse
+        if: matrix.python == '3.11'
+        run: |
+          python notebook/setup_env.py
+          python notebook/setup_env.py

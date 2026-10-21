@@ -18,6 +18,7 @@ export type LabState = {
   busy: string | null; error: string | null; notice: string | null; cost: number | null; showVars: boolean
   showCode: boolean
   draftStart: number; draftEnd: number; editEpoch: number
+  setup: string | null
 }
 
 declare module 'claude-code' {

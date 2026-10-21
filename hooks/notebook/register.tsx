@@ -6,12 +6,15 @@ import { plotSource, fitPlot, clearImageCache } from './images'
 import { graphicsReport, notebookGraphics } from './graphics'
 import { diagram, inlineMath, mathText, raster, imageUri, type Pixels } from './rich'
 import { terminalPlot } from './plot'
+import { configuredPython, setupRuntime, type RuntimeChoice } from './setup'
 import type { ImageAsset, RichBlock, CellOutput } from '../../types'
 
 const lab = atom({ plugin: 'cc-notebook', key: 'lab' } as const, initialLab())
 const done = atom({ plugin: 'cc-notebook', key: 'done' } as const, 0)
 let runtime: string | null = null
 let python = 'python'
+let choice: RuntimeChoice | null = null
+let settingUp: Promise<RuntimeChoice> | null = null
 let booting: Promise<void> | null = null
 let closing = false
 let imagesSupported = false
@@ -158,13 +161,29 @@ async function invoke($: EngineInterface, mode: string, input?: Record<string, u
   const argv = [python, `${$.plugin.root}/notebook/bridge.py`, mode]
   if (mode === 'start') argv.push('--workspace', await $.session.cwd(), '--session', await $.session.id())
   if (mode === 'request' && runtime) argv.push('--runtime', runtime)
-  const ran = await $.process.run(argv, { stdin: input ? JSON.stringify(input) : undefined, timeoutMs: 350000, env: { PYTHONUTF8: '1' } })
+  const ran = await $.process.run(argv, { stdin: input ? JSON.stringify(input) : undefined, timeoutMs: 350000, env: { PYTHONUTF8: '1', ...(choice?.typst ? { CLAUDE_NOTEBOOK_TYPST: choice.typst } : {}) } })
   if (ran.isStdoutTruncated) throw new Error('Notebook reply exceeded the host display limit. The operation may have completed; do not repeat a run blindly. Split the source into smaller notebooks and reopen.')
   let reply: { ok: boolean; result?: unknown; error?: string }
   try { reply = JSON.parse(ran.stdout.trim()) }
   catch { throw new Error(`Python bridge did not return a result. ${ran.stderr.slice(0, 500) || 'Use /lab doctor and /lab python <executable>.'}`) }
-  if (!reply.ok) throw new Error(reply.error || 'Python environment is missing notebook dependencies. See /lab doctor.')
+  if (!reply.ok && mode !== 'doctor') throw new Error(reply.error || 'Python environment is missing notebook dependencies. Run /lab setup or /lab doctor.')
   return reply.result as Record<string, unknown>
+}
+
+async function prepareRuntime($: EngineInterface, forceManaged = false, repair = false) {
+  if (!forceManaged && choice) return choice
+  if (settingUp) return settingUp
+  settingUp = (async () => {
+    const custom = await configuredPython($)
+    if (!forceManaged && custom) return { python: custom }
+    await openPane($)
+    try {
+      const result = await setupRuntime($, async setup => { await update($, lab, s => ({ ...s, setup })) }, repair)
+      await update($, lab, s => ({ ...s, notice: result.warning || 'Notebook dependencies ready. Python, Typst and MiTeX checked.' }))
+      return result
+    } finally { await update($, lab, s => ({ ...s, setup: null })) }
+  })().finally(() => { settingUp = null })
+  return settingUp
 }
 
 async function ensureBridge($: EngineInterface) {
@@ -172,8 +191,8 @@ async function ensureBridge($: EngineInterface) {
   // start is idempotent and pings an existing bridge. A crashed or idle-expired
   // bridge is recovered before any operation, never by replaying a mutation.
   booting ??= (async () => {
-    const saved = await $.store.get('lab-python')
-    python = typeof saved === 'string' && saved ? saved : await $.env.get('CLAUDE_NOTEBOOK_PYTHON') || (await $.env.get('OS') === 'Windows_NT' ? 'python' : 'python3')
+    choice = await prepareRuntime($)
+    python = choice.python
     const result = await invoke($, 'start')
     runtime = String(result.runtime)
   })().finally(() => { booting = null })
@@ -293,7 +312,7 @@ export async function startNotebook($: EngineInterface) {
       description: 'Read, edit and run the local Lab notebook. Three cell types: markdown, python, ai. Use status to read the current revision; supply that revision for editing/running. Python shares a persistent kernel. Editing NEVER executes. run_all restarts the kernel and executes saved Python in order, stopping on error; it does not regenerate AI. Outputs are bounded text and image file paths, not base64. Read image paths with Read when visual inspection is needed.',
       inputSchema: { type: 'object', properties: { action: { type: 'string', enum: [...actions] }, path: { type: 'string' }, revision: { type: 'string' }, id: { type: 'string' }, type: { type: 'string', enum: ['markdown', 'python', 'ai'] }, source: { type: 'string' }, direction: { type: 'string', enum: ['up', 'down'] }, destination: { type: 'string' }, format: { type: 'string', enum: ['ipynb', 'markdown'] }, timeout: { type: 'number', minimum: 1, maximum: 300 } }, required: ['action'], additionalProperties: false },
     })
-    await $.command.register({ name: 'lab', description: 'Python lab notebook: Markdown, Python and AI cells', argumentHint: '[demo|new|open|edit|run|generate|vars|restart|interrupt|export|doctor|graphics]', immediate: true })
+    await $.command.register({ name: 'lab', description: 'Python lab notebook: Markdown, Python and AI cells', argumentHint: '[demo|new|open|edit|run|generate|vars|restart|interrupt|export|setup|doctor|graphics]', immediate: true })
 }
 
 export async function stopNotebook($: EngineInterface, reason: string) {
@@ -374,22 +393,46 @@ export function registerNotebook(on: On) {
       const { action, value } = commandOf(e.args)
       const s = await read($, lab)
       const id = value && /^\d+$/.test(value) ? s.view?.cells[Number(value) - 1]?.id : value || s.selected
+      if (action === 'setup') {
+        if (s.busy || settingUp || s.draft !== null) throw new Error('Finish the current operation or edit before setup.')
+        if (value && value !== 'repair') throw new Error('Use /lab setup, or /lab setup repair to rebuild the environment.')
+        await update($, lab, x => ({ ...x, busy: 'setup', error: null }))
+        try {
+          const next = await prepareRuntime($, true, value === 'repair')
+          const switching = runtime !== null && (python !== next.python || choice?.typst !== next.typst)
+          if (switching) {
+            await invoke($, 'request', { action: 'shutdown' })
+            runtime = null
+          }
+          choice = next
+          python = next.python
+          await $.store.set('lab-python', 'auto')
+          if (switching) await update($, lab, x => ({ ...x, view: x.view ? { ...x.view, kernel: { ...x.view.kernel, alive: false, busy: false } } : null }))
+          return { text: `${next.warning || 'Notebook ready: Python packages, Typst and MiTeX verified.'}\nPython: ${next.python}\nSetup log: ${next.log}\nUse /lab demo to try it.${switching ? '\nThe kernel stopped; rerun cells to rebuild variables.' : ''}` }
+        } finally { await update($, lab, x => ({ ...x, busy: null })) }
+      }
       if (action === 'python') {
         if (!value) return { text: `Notebook Python: ${python}. Set it with /lab python <executable path>.` }
-        if (s.busy) throw new Error('Wait for the current operation before changing Python.')
+        if (s.busy || settingUp) throw new Error('Wait for the current operation before changing Python.')
         if (runtime) await invoke($, 'request', { action: 'shutdown' })
         runtime = null
+        choice = null
         python = value
         await $.store.set('lab-python', value)
-        return { text: `Notebook Python set to ${value}. /lab doctor checks it.` }
+        return { text: value === 'auto' ? 'Automatic notebook environment selected. /lab will prepare it if needed.' : `Notebook Python set to ${value}. /lab doctor checks it. /lab setup returns to automatic setup.` }
       }
       if (action === 'doctor') {
-        python = String(await $.store.get('lab-python') || await $.env.get('CLAUDE_NOTEBOOK_PYTHON') || (await $.env.get('OS') === 'Windows_NT' ? 'python' : 'python3'))
-        return { text: JSON.stringify(await invoke($, 'doctor'), null, 2) + '\n\n' + graphicsReport(graphics) }
+        if (s.busy || settingUp) throw new Error('Wait for the current operation before checking the environment.')
+        const custom = await configuredPython($)
+        if (!choice && !custom) return { text: 'Automatic setup has not run in this session. Use /lab setup to prepare and verify dependencies.\n\n' + graphicsReport(graphics) }
+        python = choice?.python || custom!
+        return { text: JSON.stringify(await invoke($, 'doctor'), null, 2) + (choice?.warning ? '\n' + choice.warning : '') + '\n\n' + graphicsReport(graphics) }
       }
       if (action === 'graphics') return { text: graphicsReport(graphics) }
       if (action === 'show') {
         await openPane($)
+        choice = await prepareRuntime($)
+        python = choice.python
         if (!s.view) {
           const saved = await $.store.get('lab-path')
           if (typeof saved === 'string') await perform($, 'open', { path: saved })
@@ -415,10 +458,13 @@ export function registerNotebook(on: On) {
         await perform($, 'export', { format: destination.action, destination: destination.value || undefined })
       }
       else if (action === 'import') await perform($, 'import', { source: value, path: undefined })
-      else return { text: 'Use /lab [demo|new <path>|open <path>|add markdown/python/ai|select N|edit N|run N|generate N|all|vars|restart|interrupt|refresh|export ipynb/markdown|import <ipynb>|python <path>|doctor|graphics].' }
+      else return { text: 'Use /lab [demo|new <path>|open <path>|add markdown/python/ai|select N|edit N|run N|generate N|all|vars|restart|interrupt|refresh|export ipynb/markdown|import <ipynb>|python <path>|setup [repair]|doctor|graphics].' }
       if (action !== 'interrupt') await openPane($)
       return { text: (await read($, lab)).notice || `Notebook: ${action} complete.` }
-    } catch (error) { return { text: `Notebook: ${messageOf(error)}` } }
+    } catch (error) {
+      await update($, lab, x => ({ ...x, error: messageOf(error) }))
+      return { text: `Notebook: ${messageOf(error)}` }
+    }
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
@@ -453,6 +499,7 @@ export function registerNotebook(on: On) {
       <Box justifyContent="space-between"><Text bold color="claude">LAB NOTEBOOK</Text><Text dimColor>{s.cost === null ? '' : `$${s.cost.toFixed(3)} session`}</Text></Box>
       <Text bold>{v?.title ?? 'Your next experiment'}</Text>
       <Text dimColor>{s.busy ? `● ${s.busy}…` : v?.kernel.alive ? '● Python ready · variables retained' : '○ Python stopped · saved outputs remain'}</Text>
+      {s.setup ? <Text>{s.setup}</Text> : null}
       {e.surface === 'terminal' && graphics.forceIgnored ? <Text dimColor>Native images unavailable here; using readable previews. /lab graphics explains why.</Text> : null}
       {s.error ? <Text color="red">{cleanText(s.error)}</Text> : null}
       {s.notice ? <Text color="success">{cleanText(s.notice)}</Text> : null}

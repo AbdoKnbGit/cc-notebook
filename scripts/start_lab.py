@@ -21,7 +21,7 @@ def claude_binary():
 def main():
     command = [claude_binary(), "--plugin-dir", str(ROOT)]
     command.extend(sys.argv[1:])
-    env = {**os.environ, "CLAUDE_NOTEBOOK_PYTHON": sys.executable, "DISABLE_AUTOUPDATER": "1"}
+    env = {**os.environ, "DISABLE_AUTOUPDATER": "1"}
     return subprocess.call(command, cwd=ROOT, env=env)
 
 

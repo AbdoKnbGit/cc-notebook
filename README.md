@@ -2,22 +2,19 @@
 
 A cell-based notebook plugin for Claude Code. Mix Markdown, persistent Python, and AI instruction cells; review generated cells before running them; inspect variables; and export to Jupyter.
 
-## Try it locally
+## Install
 
-Install Git, Python 3.10+ and Claude Code with function hooks (tested with 2.1.306). The Python packages are `ipykernel`, `jupyter-client`, `nbformat`, `matplotlib`, `pandas`, and `Pillow`; the requirements file installs them together. JupyterLab and a separate Node installation are not needed to use the plugin. Mermaid rendering is bundled.
+Install Python 3.10+ and Claude Code with function hooks (tested with 2.1.306). In Claude Code, run:
 
-```powershell
-git clone https://github.com/AbdoKnbGit/cc-notebook.git
-cd cc-notebook
-python -m venv .venv
-.venv\Scripts\Activate.ps1
-python -m pip install -r notebook/requirements.txt
-python scripts/start_lab.py
+```text
+/plugin install cc-notebook --marketplace AbdoKnbGit/cc-notebook
 ```
 
-On macOS/Linux, use `python3 -m venv .venv`, then `source .venv/bin/activate` in place of the two Windows virtual-environment lines. If the repository is private, the person installing must have GitHub access.
+After installation, restart Claude Code if prompted and run `/lab demo`. On first use the notebook automatically creates its own Python environment, downloads the Python packages, installs Typst if needed, and prepares MiTeX for LaTeX. Progress appears in the notebook pane. The first setup needs an internet connection and can take several minutes. No administrator privileges, shell activation, or manual `pip` command is needed.
 
-For the best equation support and SVG previews, also install [Typst](https://typst.app/open-source/): `winget install typst` on Windows, `brew install typst` on macOS, or the official Linux binary on your PATH. Restart your terminal after installation. Typst downloads the pinned MiTeX equation package on first use. Basic math can use Matplotlib MathText without Typst; a full TeX Live/MiKTeX installation and a Sixel encoder are not required.
+Python itself is a prerequisite: setup gives installation guidance if it cannot find Python 3.10+. Debian/Ubuntu may also need `python3-venv`. If this repository is private, the person installing must have GitHub access. Claude Code may ask you to trust the marketplace and choose an installation scope.
+
+Setup installs `ipykernel`, `jupyter-client`, `nbformat`, `matplotlib`, `pandas`, and `Pillow`. Mermaid is bundled. Typst downloads use the official 0.15.1 binaries with pinned SHA-256 checksums on Windows, macOS, and Linux, for x86-64 and ARM64. An existing working Typst is reused. JupyterLab, Node, TeX Live/MiKTeX, and a Sixel encoder are not required.
 
 Then in Claude Code:
 
@@ -30,37 +27,27 @@ Then in Claude Code:
 
 The visual demo combines explanations, Mermaid, equations and an inline image. Cell 3 runs a reproducible Python experiment and displays its Markdown, equation, plot and printed result in order. Cell 5 asks Claude to add an explanation and follow-up cells. Generation makes a separate request through Claude Code using your session's model and authentication; it may incur API charges. Generated Python is saved for review and does not execute automatically.
 
-Use `/lab doctor` if Python dependencies are missing. On macOS or Linux, use `python3` if `python` is not installed. Running the launcher from a virtual environment selects that environment's Python.
+Use `/lab setup` to retry a failed download or switch from a custom Python to automatic setup. `/lab setup repair` builds a fresh environment if packages were damaged; the old environment is preserved. `/lab doctor` reports the selected Python, modules, and renderer. If advanced LaTeX setup fails, Python still works with basic math and an explicit warning; retry setup when the network is available. Changing environments stops the current kernel, so rerun cells to rebuild variables.
 
 Use `/lab graphics` to check the image mode. Native terminal images require Kitty/Ghostty or iTerm2 3.5+ (Claude Code 2.1.305+ in fullscreen). Windows Terminal currently gets readable equations, data-based line charts and image thumbnails, with links to full-resolution images and typeset equations. The notebook ignores forced images on unsupported terminals to prevent corrupted placeholders. Installing a Sixel encoder cannot add the missing Sixel backend to Claude Code's plugin API.
 
 Use `/lab edit 1` to edit cell 1. Markdown and LaTeX share a Markdown cell: `$x^2$` is inline notation and `$$` on separate lines around `x^2` makes a display equation. [Copyable examples and editor controls](docs/notebook.md#visual-notebook).
 
-To enable the plugin for ordinary Claude Code launches in this workspace:
+## Try a source checkout
+
+With Git, Python and Claude Code installed:
 
 ```powershell
-python scripts/install_local.py
-claude
+git clone https://github.com/AbdoKnbGit/cc-notebook.git
+cd cc-notebook
+python scripts/start_lab.py
 ```
 
-## Install into another project
+Use `python3` on macOS/Linux if needed. Open `/lab demo`; the same automatic setup runs. To install the checkout for ordinary Claude launches in this workspace, run `python scripts/install_local.py` once.
 
-With the Python requirements installed, open Claude Code in the project where you want to keep notebooks:
+For an environment you manage yourself, install `notebook/requirements.txt` there, then use `/lab python <full executable path>` or set `CLAUDE_NOTEBOOK_PYTHON` before launching Claude. This bypasses automatic installation and never changes that environment's packages. Use `/lab setup` to return to the managed environment. `/lab demo` preserves subsequent edits; `/lab new` creates a Markdown/Python/AI starter.
 
-```text
-/plugin install cc-notebook --marketplace AbdoKnbGit/cc-notebook
-```
-
-Restart Claude Code if prompted, then create a notebook:
-
-```text
-/lab doctor
-/lab new notebooks/analysis.nb.md
-/lab run 2
-/lab generate 3
-```
-
-`/lab demo` copies the bundled visual example into your project and preserves subsequent edits. `/lab new` creates a small starter with Markdown, Python, and an AI instruction cell. When installing in another project, use `/lab python <full path to your virtual environment's Python>` so the plugin uses the environment where you installed the requirements.
+Managed environments live outside projects and plugin caches: `%LOCALAPPDATA%\cc-notebook` on Windows, `~/Library/Application Support/cc-notebook` on macOS, and `${XDG_DATA_HOME:-~/.local/share}/cc-notebook` on Linux. `CLAUDE_NOTEBOOK_HOME` overrides this location. Setup prints its log path. Simultaneous sessions share a setup lock. Completed environments are reused across projects and UI-only plugin updates; dependency or Python changes create a new environment. No global Python packages or system PATH are changed.
 
 ## Keep it updated
 
@@ -73,7 +60,7 @@ claude plugin update cc-notebook@cc-notebook
 
 For automatic updates, open `/plugin` → Marketplaces → cc-notebook → Enable auto-update. Custom marketplaces have it off by default. Claude shows an update notice when it updates the installed copy; restart or use `/reload-plugins` to apply it. See [Claude's update documentation](https://code.claude.com/docs/en/plugins/install#keep-plugins-updated) and this repository's [changelog](CHANGELOG.md).
 
-For a checkout started with `scripts/start_lab.py`, use `git pull --ff-only`, reinstall `notebook/requirements.txt` in the same virtual environment, and restart the launcher. If you installed a snapshot with `scripts/install_local.py`, also run the two marketplace update commands above. Your notebooks and generated output cache are separate from the plugin installation.
+For a checkout started with `scripts/start_lab.py`, use `git pull --ff-only` and restart the launcher. Managed dependencies are checked on the next notebook use, including any changed requirements. Custom Python users reinstall `notebook/requirements.txt` themselves. If you installed a snapshot with `scripts/install_local.py`, also run the two marketplace update commands above. Your notebooks and generated output cache are separate from the plugin installation.
 
 ## Ask Claude to work on cells
 

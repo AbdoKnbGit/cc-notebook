@@ -1,6 +1,6 @@
 import type { CellOutput, LabState, NotebookView } from '../../types'
 export type { CellKind, CellOutput, LabState, NotebookView, NotebookCell } from '../../types'
-export const initialLab = (): LabState => ({ view: null, selected: null, draft: null, draftRevision: null, busy: null, error: null, notice: null, cost: null, showVars: false, showCode: false, draftStart: 0, draftEnd: 0, editEpoch: 0 })
+export const initialLab = (): LabState => ({ view: null, selected: null, draft: null, draftRevision: null, busy: null, error: null, notice: null, cost: null, showVars: false, showCode: false, draftStart: 0, draftEnd: 0, editEpoch: 0, setup: null })
 export const PANE = 'cc-lab'
 export const TOOL = 'mcp__cc-notebook__notebook'
 export const actions = ['status', 'new', 'demo', 'open', 'add', 'update', 'remove', 'move', 'run', 'run_all', 'vars', 'restart', 'interrupt', 'export', 'import'] as const

@@ -84,7 +84,7 @@ class RichContent:
     def __init__(self, workspace):
         self.workspace = Path(workspace).resolve()
         self.cache = {}
-        self.typst = shutil.which("typst")
+        self.typst = os.environ.get("CLAUDE_NOTEBOOK_TYPST") or shutil.which("typst")
         self.failed_math = set()
 
     def asset(self, folder, data):

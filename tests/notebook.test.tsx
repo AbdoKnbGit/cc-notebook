@@ -17,10 +17,57 @@ const sample = () => ({ path: '/work/notebook.nb.md', revision: 'r1', title: 'Ex
   { id: 'ai', type: 'ai', source: 'Explain this result', status: 'ready', run: null },
 ] })
 
-function world(on: any, options: { answer?: string; deny?: boolean; failedSave?: boolean; env?: Record<string, string> } = {}) {
+test('automatic setup streams progress and uses the installed runtime for notebook operations', async ($, on) => {
+  const w = world(on)
+  let installs = 0
+  on('process.spawn', async function* (_$, e) {
+    installs++
+    expect(e.argv[0]).toBe('/base/python')
+    const data = JSON.stringify({ progress: 'Downloading packages…' }) + '\n' + JSON.stringify({ ok: true, result: { python: '/managed/python', typst: '/managed/typst', latex: true } }) + '\n'
+    yield { stream: 'stdout', text: data.slice(0, 19) }
+    yield { stream: 'stdout', text: data.slice(19) }
+    return { value: { code: 0, signal: null } }
+  })
+  await run($, 'python auto')
+  await run($, 'new automatic.nb.md')
+  await run($, 'run 2')
+  expect(installs).toBe(1)
+  expect(w.calls.some(c => c.action === 'run')).toBe(true)
+  expect(w.bridgeCommands.every(e => e.argv[0] === '/managed/python' && e.init.env.CLAUDE_NOTEBOOK_TYPST === '/managed/typst')).toBe(true)
+})
+
+test('failed automatic setup stays retryable and never starts the bridge', async ($, on) => {
+  const w = world(on)
+  let attempts = 0
+  on('process.spawn', async function* () {
+    attempts++
+    yield { stream: 'stdout', text: JSON.stringify(attempts === 1 ? { ok: false, error: 'Network unavailable. Retry /lab setup.' } : { ok: true, result: { python: '/managed/python', warning: 'Advanced LaTeX unavailable; retry /lab setup.' } }) + '\n' }
+    return { value: { code: attempts === 1 ? 1 : 0, signal: null } }
+  })
+  await run($, 'python auto')
+  const failed = await run($, 'new retry.nb.md')
+  expect(failed.text).toContain('Network unavailable')
+  expect(w.calls.length).toBe(0)
+  const retried = await run($, 'setup')
+  expect(retried.text).toContain('Advanced LaTeX unavailable')
+  await run($, 'new retry.nb.md')
+  expect(attempts).toBe(2)
+  expect(w.calls.at(-1).action).toBe('new')
+})
+
+test('missing Python gives an actionable error without attempting downloads', async ($, on) => {
+  world(on, { missingPython: true })
+  let spawned = false
+  on('process.spawn', async function* () { spawned = true; return { value: { code: 1, signal: null } } })
+  const result = await run($, 'setup')
+  expect(result.text).toContain('Python 3.10 or newer was not found')
+  expect(spawned).toBe(false)
+})
+
+function world(on: any, options: { answer?: string; deny?: boolean; failedSave?: boolean; missingPython?: boolean; env?: Record<string, string> } = {}) {
   mock.store(on)
   const clock = mock.clock(on)
-  mock.env(on, { DISABLE_AUTOUPDATER: '1', ...options.env })
+  mock.env(on, { DISABLE_AUTOUPDATER: '1', CLAUDE_NOTEBOOK_PYTHON: 'python', ...options.env })
   on('session.cwd', () => ({ value: '/work' }))
   on('session.id', () => ({ value: 'test-session' }))
   on('session.model', () => ({ value: 'claude-sonnet-4-6' }))
@@ -30,14 +77,16 @@ function world(on: any, options: { answer?: string; deny?: boolean; failedSave?:
   on('tool.check', () => ({ decision: options.deny ? 'deny' : 'allow', reason: 'Test permission policy' }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('ui.toast', () => ({ value: undefined }))
-  const view: any = sample(), calls: any[] = [], prompts: string[] = []
+  const view: any = sample(), calls: any[] = [], prompts: string[] = [], bridgeCommands: any[] = []
   on('model.complete', (_$: any, e: any) => {
     prompts.push(e.prompt)
     return { value: { isAnswered: true, text: options.answer ?? '{"cells":[{"type":"python","source":"x + 2"}]}', usage: { input_tokens: 20, output_tokens: 10, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } } }
   })
   on('process.run', (_$: any, e: any) => {
     let result: any = {}, error: string | null = null
+    if (e.argv.includes('-c')) return { value: { exitCode: options.missingPython ? 1 : 0, stdout: options.missingPython ? '' : '/base/python\n', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
     if (!String(e.argv[1]).endsWith('/notebook/bridge.py')) return { value: { exitCode: 1, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    bridgeCommands.push(e)
     if (e.argv[2] === 'start') result = { runtime: '/work/.claude-notebook/runtime/test' }
     else if (e.argv[2] === 'doctor') result = { python: 'python', modules: { ipykernel: true } }
     else {
@@ -52,7 +101,7 @@ function world(on: any, options: { answer?: string; deny?: boolean; failedSave?:
     }
     return { value: { exitCode: 0, stdout: JSON.stringify(error ? { ok: false, error } : { ok: true, result }), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
   })
-  return { view, calls, prompts, clock }
+  return { view, calls, prompts, clock, bridgeCommands }
 }
 
 test('notebook command preserves quoted Windows paths and validates AI JSON', () => {

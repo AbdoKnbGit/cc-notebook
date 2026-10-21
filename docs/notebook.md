@@ -4,14 +4,19 @@
 
 ## Start locally
 
-Requires Python 3.10+ and Claude Code with function hooks (tested with 2.1.305). The notebook bridge uses Python and Jupyter APIs on Windows, macOS, and Linux; it does not invoke `sh`, `sips`, `osascript`, `perl`, or ImageMagick.
+Requires Python 3.10+ and Claude Code with function hooks (tested with 2.1.306). The notebook bridge uses Python and Jupyter APIs on Windows, macOS, and Linux; it does not invoke `sh`, `sips`, `osascript`, `perl`, or ImageMagick.
 
 ```sh
-python -m pip install -r notebook/requirements.txt
 python scripts/start_lab.py
 ```
 
-On macOS/Linux, use `python3` if `python` is not installed. A virtual environment is recommended; run the launcher with that environment's Python. It passes the exact interpreter to the notebook. `/lab python <full executable path>` overrides it; `/lab doctor` checks the selected environment.
+On macOS/Linux, use `python3` if `python` is not installed. Opening `/lab` or `/lab demo` prepares an isolated notebook environment automatically, showing progress as it installs the requirements, Typst, and MiTeX. Python itself must already be installed. Debian/Ubuntu may need `python3-venv`. First use needs internet access. A failed optional Typst/MiTeX download leaves Python usable with basic math; `/lab setup` retries it.
+
+For marketplace installs, `/plugin install cc-notebook --marketplace AbdoKnbGit/cc-notebook` installs the standalone notebook. Open `/lab demo` after it loads to trigger the same automatic setup. No manual pip or Typst installation is needed on supported platforms. The repository must be accessible to the installing user.
+
+`/lab setup repair` builds a replacement environment without changing the old one. Environments live outside the plugin cache and projects, under `%LOCALAPPDATA%/cc-notebook` (Windows), `~/Library/Application Support/cc-notebook` (macOS), or `$XDG_DATA_HOME/cc-notebook` / `~/.local/share/cc-notebook` (Linux). Set `CLAUDE_NOTEBOOK_HOME` to override this. Requirements and Python identity determine reuse; UI-only plugin updates do not reinstall packages. Setup logs give download and verification errors; concurrent sessions share an OS lock. Typst downloads use pinned official 0.15.1 checksums on x86-64 and ARM64 Windows/macOS/Linux. MiTeX 0.2.7 is prepared through Typst's package manager. Other platforms can use a manually installed Typst.
+
+To manage packages yourself, install `notebook/requirements.txt` in your own environment and use `/lab python <full executable path>` or `CLAUDE_NOTEBOOK_PYTHON`. Automatic setup never installs into that environment. `/lab setup` returns to managed dependencies; `/lab doctor` checks the selected environment. A switch stops the kernel, so rerun cells to rebuild variables.
 
 Inside Claude Code:
 
@@ -33,6 +38,8 @@ To enable the notebook for ordinary `claude` launches **in this project**, run `
 | `/lab` | Open the notebook pane, restoring the last path if available |
 | `/lab demo` | Create or reopen the visual lab, preserving edits |
 | `/lab doctor`, `/lab graphics` | Check Python dependencies and explain the current terminal image mode |
+| `/lab setup`, `/lab setup repair` | Prepare automatic dependencies, retry downloads, or rebuild a damaged managed environment |
+| `/lab python auto`, `/lab python <path>` | Select automatic setup or an existing environment you manage yourself |
 | `/lab new notebooks/name.nb.md` | Create a notebook without overwriting an existing file |
 | `/lab open <path>` | Open a saved notebook; switching notebooks stops the previous kernel |
 | `/lab select N`, `/lab run N` | Select or execute a Python cell by number |

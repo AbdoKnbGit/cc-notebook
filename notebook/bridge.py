@@ -228,7 +228,8 @@ def main():
             import importlib.util
             import shutil
             modules = {m: importlib.util.find_spec(m) is not None for m in ("ipykernel", "jupyter_client", "nbformat", "matplotlib", "pandas", "PIL")}
-            emit({"ok": all(modules.values()), "result": {"python": sys.executable, "modules": modules, "rendering": {"image_fallback": "terminal colour blocks", "math": "Typst/MiTeX with MathText fallback" if shutil.which('typst') else "MathText and Unicode", "svg": bool(shutil.which('typst'))}}})
+            typst = os.environ.get("CLAUDE_NOTEBOOK_TYPST") or shutil.which('typst')
+            emit({"ok": all(modules.values()), "result": {"ready": all(modules.values()), "python": sys.executable, "modules": modules, "rendering": {"typst": typst, "image_fallback": "terminal colour blocks", "math": "Typst/MiTeX with MathText fallback" if typst else "MathText and Unicode", "svg": bool(typst)}}})
         else:
             emit(request(runtime, json.load(sys.stdin)))
     except Exception as error:
