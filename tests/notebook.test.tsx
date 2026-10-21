@@ -1,5 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
-import { commandOf, parseGenerated, TOOL, PANE } from '../hooks/notebook/model'
+import { commandOf, initialLab, notebookContext, parseGenerated, TOOL, PANE } from '../hooks/notebook/model'
+import { editPage, replacePage } from '../hooks/notebook/editor'
 import { fitPlot, plotSource, clearImageCache } from '../hooks/notebook/images'
 import { diagram, inlineMath, mathText, raster, imageUri } from '../hooks/notebook/rich'
 import { terminalPlot } from '../hooks/notebook/plot'
@@ -8,6 +9,7 @@ import { notebookGraphics, graphicsReport } from '../hooks/notebook/graphics'
 const CMD = { origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 100 } } as const
 const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aL1sAAAAASUVORK5CYII='
 const run = ($: any, args: string) => $.command.run({ command: 'lab', args, ...CMD })
+const input = async (ui: any, text: string, kind = 'submit') => ui.input({ key: (await ui.find({ type: 'Input' })).props.key, text, kind })
 const mount = ($: any, surface = 'terminal') => $.ui.mount({ plugin: 'cc-notebook', surface, component: 'Pane', requestId: PANE, props: { title: 'Lab', isFocused: true, bodyColumns: 80, placement: 'dock', scroll: { offset: 0, bodyRows: 30 }, view: {} }, viewport: { columns: 80, rows: 40 } })
 const sample = () => ({ path: '/work/notebook.nb.md', revision: 'r1', title: 'Experiment', kernel: { alive: false, busy: false, id: null, python: 'python' }, variables: [], activity: [], history_count: 0, cells: [
   { id: 'md', type: 'markdown', source: '# Question', status: 'ready', run: null },
@@ -70,7 +72,7 @@ test('notebook opens across surfaces without starting Python; editing never exec
   const ui = await mount($)
   await ui.press({ key: 'cell-py' })
   await ui.press({ key: 'lab-edit' })
-  await ui.input({ key: 'edit-py', text: 'x = 100' })
+  await input(ui, 'x = 100')
   expect(w.view.cells[1].source).toBe('x = 100')
   expect(w.calls.some(c => c.action === 'run')).toBe(false)
   await ui.press({ key: 'lab-run' })
@@ -97,10 +99,10 @@ test('conflicting save retains the editor draft and reports the conflict', async
   await run($, 'new n.nb.md')
   const ui = await mount($)
   await ui.press({ key: 'lab-edit' })
-  await ui.input({ key: 'edit-md', text: 'keep my draft', kind: 'change' })
-  await ui.input({ key: 'edit-md', text: 'keep my draft' })
+  await input(ui, 'keep my draft', 'change')
+  await input(ui, 'keep my draft')
   expect(await ui.find({ type: 'Text', text: /changed on disk/ })).toBeDefined()
-  expect((await ui.find({ type: 'Input', key: 'edit-md' })).props.value).toBe('keep my draft')
+  expect((await ui.find({ type: 'Input' })).props.value).toBe('keep my draft')
   expect(w.view.cells[0].source).toBe('# Question')
   await ui.unmount()
 })
@@ -399,4 +401,85 @@ test('completed Python cells can expand their source without rerunning', async (
   expect((await ui.find({ type: 'Code' }))?.props.source).toContain('last_line')
   expect(w.calls.some(c => c.action === 'run')).toBe(false)
   await ui.unmount()
+})
+
+test('paged editing preserves unseen lines, blank lines and the latest typing when saved', async ($, on) => {
+  const w = world(on)
+  const original = Array.from({ length: 24 }, (_, i) => `line ${i + 1}`).join('\n') + '\n\n'
+  w.view.cells[0].source = original
+  await run($, 'new n.nb.md')
+  await run($, 'edit 1')
+  const ui = await mount($)
+  const first = await ui.find({ type: 'Input' })
+  expect(first.props.value).toBe(editPage(original).text)
+  expect(first.props.value).toContain('line 1')
+  expect(first.props.value).not.toContain('line 24')
+  await input(ui, 'edited first page', 'change')
+  await ui.press({ key: 'lab-edit-next' })
+  const second = await ui.find({ type: 'Input' })
+  expect(second.props.value).toContain('line 9')
+  expect(second.props.key).not.toBe(first.props.key)
+  await input(ui, second.props.value.replace('line 9', 'edited ninth line'), 'change')
+  expect(w.view.cells[0].source).toBe(original)
+  await ui.press({ key: 'lab-save-edit' })
+  expect(w.view.cells[0].source).toBe(['edited first page', 'edited ninth line', ...Array.from({ length: 15 }, (_, i) => `line ${i + 10}`), '', ''].join('\n'))
+  expect(w.calls.filter(c => c.action === 'update').length).toBe(1)
+  expect(w.calls.some(c => c.action === 'run')).toBe(false)
+  await ui.press({ key: 'lab-edit' })
+  await input(ui, 'do not save', 'change')
+  await ui.press({ key: 'lab-cancel-edit' })
+  expect(w.view.cells[0].source).not.toContain('do not save')
+  await ui.unmount()
+  expect(replacePage('', 0, 1, 'new\n')).toEqual({ draft: 'new\n', draftEnd: 2 })
+})
+
+test('complex LaTeX fallback leads with its full-resolution link instead of pages of raw commands', async ($, on) => {
+  const w = world(on)
+  const source = '\\boxed{\\frac{1}{2}}'
+  const asset = { file: '/work/complex.png', preview: '/work/complex-preview.png', width: 80, height: 20, preview_width: 80, preview_height: 20 }
+  w.view.cells[0].rich = [{ kind: 'math', text: source, dark: asset }]
+  await ($ as any).session.start({ source: 'startup', cwd: '/work' })
+  await run($, 'new n.nb.md')
+  const ui = await mount($)
+  expect(await ui.find({ type: 'Link', text: 'Open typeset equation' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: source })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /native image display unavailable/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('the next chat prompt gets selected cell and execution status without starting Python or generation', async ($, on) => {
+  const w = world(on)
+  on('prompt.submit', (_$: any, e: any) => ({ text: e.text, context: e.context }))
+  const submit = (text: string) => $.prompt.submit({ text, wait: false, origin: { kind: 'composer' } })
+  expect((await submit('hello')).context).toBeUndefined()
+  await run($, 'new n.nb.md')
+  await run($, 'run 2')
+  const before = w.calls.length
+  const reply = await submit('Explain the cell I just ran')
+  expect(reply.text).toBe('Explain the cell I just ran')
+  expect(reply.context?.join('\n')).toContain('"number":2')
+  expect(reply.context?.join('\n')).toContain('"status":"ok"')
+  expect(reply.context?.join('\n')).toContain('42')
+  expect(reply.context?.join('\n')).toContain('current sources, outputs and revision')
+  expect(w.calls.length).toBe(before)
+  expect(w.prompts.length).toBe(0)
+  // An unreadable cached result must not block the person's ordinary chat.
+  w.view.cells[1].run = { at: 1 }
+  await run($, 'refresh')
+  const recovered = await submit('hello again')
+  expect(recovered.text).toBe('hello again')
+  expect(recovered.context).toBeUndefined()
+})
+
+test('notebook prompt snapshots bound output and exclude draft source and image payloads', () => {
+  expect(notebookContext(initialLab())).toBe(null)
+  const v: any = sample()
+  v.cells[1].run = { outputs: [{ output_type: 'stream', text: 'data:image/png;base64,AAAA ' + 'x'.repeat(10000) }], images: ['/work/image.png'], execution_count: 3, at: 10, duration_ms: 5 }
+  v.cells[1].status = 'stale'
+  const context = notebookContext({ ...initialLab(), view: v, selected: 'py', draft: 'PRIVATE_UNSAVED_DRAFT' })!
+  expect(context).toContain('"unsavedEdit":true')
+  expect(context).toContain('"status":"stale"')
+  expect(context).not.toContain('PRIVATE_UNSAVED_DRAFT')
+  expect(context).not.toContain('base64')
+  expect(context.length).toBeLessThan(4000)
 })

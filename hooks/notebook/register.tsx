@@ -1,6 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On, ElementTable, RenderSurface, RenderElement } from 'claude-code'
-import { actions, cleanText, commandOf, compactView, initialLab, outputText, parseGenerated, PANE, TOOL, type LabState, type NotebookView } from './model'
+import { actions, cleanText, commandOf, compactView, initialLab, notebookContext, outputText, parseGenerated, PANE, TOOL, type LabState, type NotebookView } from './model'
+import { EDIT_LINES, editPage, replacePage } from './editor'
 import { plotSource, fitPlot, clearImageCache } from './images'
 import { graphicsReport, notebookGraphics } from './graphics'
 import { diagram, inlineMath, mathText, raster, imageUri, type Pixels } from './rich'
@@ -127,7 +128,15 @@ async function richContent($: EngineInterface, elements: ElementTable, surface: 
     } else if (block.kind === 'math') {
       const asset = light ? block.light : block.dark
       if (asset && (surface !== 'terminal' || imagesSupported)) parts.push(await picture($, elements, surface, asset, width, id, light, mathText(block.text), site))
-      else parts.push(<Box key={id} flexDirection="column" marginY={1}><Text>{mathText(block.text)}</Text>{asset ? <Link href={imageUri(asset.file)} label="Open typeset equation" /> : null}</Box>)
+      else {
+        const text = mathText(block.text)
+        const complex = /\\[A-Za-z]/.test(text) || text.split('\n').length > 4 || text.length > 240
+        parts.push(<Box key={id} flexDirection="column" marginY={1}>
+          {asset && complex ? <Text>Typeset LaTeX equation · native image display unavailable here</Text> : null}
+          {asset ? <Link href={imageUri(asset.file)} label="Open typeset equation" /> : null}
+          {!complex ? <Text>{text}</Text> : asset ? <Text dimColor>Edit this cell to change the LaTeX source.</Text> : <Box flexDirection="column"><Text dimColor>{`LaTeX source · ${block.error || 'typeset preview unavailable'}`}</Text><Code source={block.text} language="latex" /></Box>}
+        </Box>)
+      }
     } else parts.push(<Markdown key={id} text={inlineMath(cleanText(block.text))} />)
   }
   return <Box flexDirection="column">{parts}</Box>
@@ -241,6 +250,24 @@ async function select($: EngineInterface, id: string) {
   await update($, lab, s => s.draft !== null ? { ...s, error: 'Save or cancel the edit before switching cells.' } : { ...s, selected: id, error: null, showCode: false })
 }
 
+async function beginEdit($: EngineInterface, id: string) {
+  await update($, lab, s => {
+    if (s.busy || s.draft !== null) return { ...s, error: 'Finish the current operation or edit first.' }
+    const cell = s.view?.cells.find(c => c.id === id)
+    if (!cell) return { ...s, error: 'Choose a cell first.' }
+    const page = editPage(cell.source)
+    return { ...s, selected: id, draft: cell.source, draftRevision: s.view!.revision, draftStart: page.start, draftEnd: page.end, editEpoch: (s.editEpoch || 0) + 1, error: null }
+  })
+}
+
+async function moveEditPage($: EngineInterface, forward: boolean) {
+  await update($, lab, s => {
+    if (s.draft === null) return s
+    const page = editPage(s.draft, forward ? s.draftEnd : Math.max(0, s.draftStart - EDIT_LINES))
+    return { ...s, draftStart: page.start, draftEnd: page.end, editEpoch: s.editEpoch + 1 }
+  })
+}
+
 async function openPane($: EngineInterface) {
   await $.ui.open({ id: PANE, title: 'Lab notebook', focus: true, rows: 40, columns: 90 })
 }
@@ -266,7 +293,7 @@ export async function startNotebook($: EngineInterface) {
       description: 'Read, edit and run the local Lab notebook. Three cell types: markdown, python, ai. Use status to read the current revision; supply that revision for editing/running. Python shares a persistent kernel. Editing NEVER executes. run_all restarts the kernel and executes saved Python in order, stopping on error; it does not regenerate AI. Outputs are bounded text and image file paths, not base64. Read image paths with Read when visual inspection is needed.',
       inputSchema: { type: 'object', properties: { action: { type: 'string', enum: [...actions] }, path: { type: 'string' }, revision: { type: 'string' }, id: { type: 'string' }, type: { type: 'string', enum: ['markdown', 'python', 'ai'] }, source: { type: 'string' }, direction: { type: 'string', enum: ['up', 'down'] }, destination: { type: 'string' }, format: { type: 'string', enum: ['ipynb', 'markdown'] }, timeout: { type: 'number', minimum: 1, maximum: 300 } }, required: ['action'], additionalProperties: false },
     })
-    await $.command.register({ name: 'lab', description: 'Python lab notebook: Markdown, Python and AI cells', argumentHint: '[demo|new|open|run|generate|vars|restart|interrupt|export|doctor|graphics]', immediate: true })
+    await $.command.register({ name: 'lab', description: 'Python lab notebook: Markdown, Python and AI cells', argumentHint: '[demo|new|open|edit|run|generate|vars|restart|interrupt|export|doctor|graphics]', immediate: true })
 }
 
 export async function stopNotebook($: EngineInterface, reason: string) {
@@ -286,6 +313,14 @@ export async function stopNotebook($: EngineInterface, reason: string) {
 }
 
 export function registerNotebook(on: On) {
+
+  on('prompt.submit', async ($, e, next) => {
+    if (e.command || e.isMeta) return next(e)
+    let context: string | null = null
+    try { context = notebookContext(await read($, lab)) }
+    catch { /* Notebook context must never prevent an ordinary chat prompt. */ }
+    return next(context ? { ...e, context: [...(e.context ?? []), context] } : e)
+  })
 
   // Each transcript row uses its recorded result, never the current notebook.
   on('ui.render', { component: 'ToolResult', props: { tool: TOOL } }, async ($, e, next) => {
@@ -366,11 +401,12 @@ export function registerNotebook(on: On) {
       else if (action === 'add') {
         if (!['markdown', 'python', 'ai'].includes(value)) throw new Error('Use /lab add markdown|python|ai.')
         await perform($, 'add', { type: value })
-      } else if (action === 'run' || action === 'generate' || action === 'select') {
+      } else if (action === 'run' || action === 'generate' || action === 'select' || action === 'edit') {
         if (!id) throw new Error('Choose a cell number.')
         await select($, id)
         if (action === 'generate') await generate($, id)
         else if (action === 'run') await perform($, 'run', { id })
+        else if (action === 'edit') await beginEdit($, id)
         else await select($, id)
       } else if (action === 'all') await perform($, 'run_all')
       else if (['vars', 'restart', 'interrupt', 'status', 'refresh'].includes(action)) await perform($, action === 'refresh' ? 'status' : action)
@@ -379,7 +415,7 @@ export function registerNotebook(on: On) {
         await perform($, 'export', { format: destination.action, destination: destination.value || undefined })
       }
       else if (action === 'import') await perform($, 'import', { source: value, path: undefined })
-      else return { text: 'Use /lab [demo|new <path>|open <path>|add markdown/python/ai|select N|run N|generate N|all|vars|restart|interrupt|refresh|export ipynb/markdown|import <ipynb>|python <path>|doctor|graphics].' }
+      else return { text: 'Use /lab [demo|new <path>|open <path>|add markdown/python/ai|select N|edit N|run N|generate N|all|vars|restart|interrupt|refresh|export ipynb/markdown|import <ipynb>|python <path>|doctor|graphics].' }
       if (action !== 'interrupt') await openPane($)
       return { text: (await read($, lab)).notice || `Notebook: ${action} complete.` }
     } catch (error) { return { text: `Notebook: ${messageOf(error)}` } }
@@ -394,6 +430,17 @@ export function registerNotebook(on: On) {
     await read($, done)
     const v = s.view
     const current = v?.cells.find(c => c.id === s.selected)
+    const editorText = s.draft?.split('\n').slice(s.draftStart, s.draftEnd).join('\n') ?? ''
+    const editorLines = s.draft?.split('\n').length ?? 0
+    const editorKey = current ? `edit-${current.id}-${s.editEpoch}` : ''
+    const changePage = async (text: string) => {
+      await update($, lab, x => x.draft === null || x.editEpoch !== s.editEpoch ? x : { ...x, ...replacePage(x.draft, x.draftStart, x.draftEnd, text) })
+    }
+    const saveEdit = async (text?: string) => {
+      if (text !== undefined) await changePage(text)
+      const latest = await read($, lab)
+      if (latest.draft !== null && latest.editEpoch === s.editEpoch && current) await act($, 'update', { id: current.id, source: latest.draft, revision: latest.draftRevision })
+    }
     const width = Math.max(12, e.props.bodyColumns || e.viewport?.columns || 80)
     const light = await lightTheme($)
     const markdown = current?.type === 'markdown' ? await richContent($, elements, e.surface, current.rich ?? [{ kind: 'markdown', text: current.source }], width - 4, current.id, light) : null
@@ -422,13 +469,20 @@ export function registerNotebook(on: On) {
           {current.generated_from ? <Text dimColor>Generated from an AI instruction · editable and saved</Text> : null}
           {current.status === 'stale' ? <Text color="yellow">Inputs or earlier execution changed. Review and rerun or regenerate.</Text> : null}
           {s.draft !== null ? <Box flexDirection="column">
-            <Input key={`edit-${current.id}`} rows={Math.min(14, Math.max(4, s.draft.split('\n').length + 1))} value={s.draft} submitLabel="save" autoFocus onInput={draft => void update($, lab, x => ({ ...x, draft }))} onSubmit={source => act($, 'update', { id: current.id, source, revision: s.draftRevision })} />
+            <Text dimColor>{`Source · lines ${s.draftStart + 1}–${s.draftEnd} of ${editorLines} · Enter saves the whole cell`}</Text>
+            {current.type === 'markdown' ? <Text dimColor>Markdown text and $inline math$; use $$ on separate lines for a display equation.</Text> : null}
+            <Input key={editorKey} rows={12} label="Source" value={editorText} placeholder="This part of the cell is empty. Type here." submitLabel="save cell" autoFocus onInput={changePage} onSubmit={saveEdit} />
+            <Box gap={1} flexWrap="wrap">
+              {s.draftStart > 0 ? <Button key="lab-edit-previous" label="Previous lines" onPress={() => moveEditPage($, false)} /> : null}
+              {s.draftEnd < editorLines ? <Button key="lab-edit-next" label="Next lines" onPress={() => moveEditPage($, true)} /> : null}
+              <Button key="lab-save-edit" label="Save cell" onPress={() => saveEdit()} />
             <Button key="lab-cancel-edit" label="Cancel edit" onPress={() => void update($, lab, x => ({ ...x, draft: null, draftRevision: null, error: null }))} />
+            </Box>
           </Box> : <Box flexDirection="column">
             {current.type === 'markdown' ? markdown : <Code source={cleanText(current.type === 'python' && current.run && !s.showCode ? current.source.split('\n').slice(0, 3).join('\n') : current.source).slice(0, 20000)} language={current.type === 'python' ? 'python' : 'text'} />}
             {current.type === 'python' && current.run && current.source.split('\n').length > 3 ? <Button key="lab-code-toggle" label={s.showCode ? 'Collapse code' : `Show full code (${current.source.split('\n').length} lines)`} onPress={() => void update($, lab, x => ({ ...x, showCode: !x.showCode }))} /> : null}
             <Box gap={1} flexWrap="wrap" marginY={1}>
-              <Button key="lab-edit" label="Edit" onPress={() => void update($, lab, x => ({ ...x, draft: current.source, draftRevision: v.revision }))} />
+              <Button key="lab-edit" label="Edit" onPress={() => beginEdit($, current.id)} />
               {current.type === 'python' ? <Button key="lab-run" label="Run cell" onPress={() => act($, 'run', { id: current.id })} /> : null}
               {current.type === 'ai' ? <Button key="lab-generate" label="Generate cells" onPress={() => generate($, current.id).catch(error => update($, lab, x => ({ ...x, error: messageOf(error) })).then(() => undefined))} /> : null}
               <Button key="lab-up" label="Move up" onPress={() => act($, 'move', { id: current.id, direction: 'up' })} />

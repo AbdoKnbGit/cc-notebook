@@ -36,6 +36,7 @@ To enable the notebook for ordinary `claude` launches **in this project**, run `
 | `/lab new notebooks/name.nb.md` | Create a notebook without overwriting an existing file |
 | `/lab open <path>` | Open a saved notebook; switching notebooks stops the previous kernel |
 | `/lab select N`, `/lab run N` | Select or execute a Python cell by number |
+| `/lab edit N` | Edit from the first source lines; Previous/Next lines navigate without saving |
 | `/lab add markdown`, `python`, or `ai` | Add an empty cell |
 | `/lab generate N` | Generate up to eight editable Markdown/Python cells from an AI instruction |
 | `/lab all` | Restart, then run saved Python in order; stop at the first failure |
@@ -45,9 +46,11 @@ To enable the notebook for ordinary `claude` launches **in this project**, run `
 | `/lab export markdown [path]` | Export a local report with links to cached plots |
 | `/lab import <file.ipynb>` | Import sources into a new `.nb.md`; old execution outputs are not imported |
 
-The pane has cell editing, reordering, deletion, execution, generation, and variable controls. Save/cancel a draft before changing cells. A disk conflict keeps the draft. Cancel or copy the draft before refreshing. Notebook source and export paths must remain inside the current workspace.
+The pane has cell editing, reordering, deletion, execution, generation, and variable controls. The editor initially shows eight source lines, with the line range and Previous/Next controls. Enter or Save cell saves the whole draft, including changes on other pages; Cancel discards the draft. Editing and page navigation never execute code. Save/cancel a draft before changing cells. A disk conflict keeps the draft. Cancel or copy the draft before refreshing. Notebook source and export paths must remain inside the current workspace.
 
 Claude can use the registered `notebook` tool to read, edit, and run cells. Mutating tool calls honor the session permission verdict. Python runs with the permissions of the selected local interpreter, as ordinary Jupyter does; it is not a sandbox. Cells can access the local filesystem and network when explicitly run.
+
+With a notebook open, ask Claude: “Use the notebook tool to change cell 3 to plot tau=4, run it, and explain its output.” Claude reads `status` for cell IDs and the current revision, makes the edit, executes the cell, and receives its results. A button run also becomes visible in a small snapshot attached to your next ordinary chat message: active path, selected cell, latest execution status and bounded text output. Full source, outputs, variables and image paths are available through the tool. This does not send a message or make a model request when you click Run. It appends context beside the next prompt without rewriting the system prompt or earlier conversation; image bytes and unsaved draft contents are excluded. Claude should refresh status before acting, since the snapshot can become stale while an operation is running or a file changes externally.
 
 ## File format and Jupyter
 
@@ -116,6 +119,20 @@ Mermaid uses the vendored `beautiful-mermaid` 1.1.3 text renderer: flowchart, st
 Math uses Unicode notation when native images are unavailable. Typeset display equations use installed Typst/MiTeX, with Matplotlib MathText as a fallback; unsupported expressions retain their source. Typst may download its pinned MiTeX package on first use. Dark/light equation variants follow Claude's theme. This is mathematical notation, not a general LaTeX document compiler. Static self-contained SVG previews require Typst; SVG source is retained in Jupyter export even without it.
 
 When inline native math is unavailable, **Open typeset equation** links to the generated full-resolution PNG beside the readable text. A successful equation compile confirms the typesetter works; it does not mean the terminal can display native pixels.
+
+There is no separate LaTeX cell type. Write ordinary Markdown and math in the same **Markdown** cell. Inline `$...$` uses readable Unicode notation; display `$$...$$` becomes a typeset image where native graphics are available. For example, paste this into the cell editor (without an outer code fence):
+
+```markdown
+# Decay experiment
+
+This is **Markdown**. The time constant is $\tau = 2$.
+
+$$
+y(t) = A e^{-t/\tau}
+$$
+```
+
+`\[...\]` and `latex`/`math` code fences also select display math. Use one delimiter pair; avoid nesting `\[...\]` inside `$$...$$`. These are equation fragments, not complete LaTeX documents with `\documentclass` or arbitrary packages. Unsupported equations retain their source and report the typesetting problem. On terminals without native graphics, complex equations show their image link prominently rather than a wall of raw LaTeX. When editing, seeing the original Markdown/LaTeX syntax is expected; Save returns to the rendered view.
 
 Image and equation previews live under `.claude-notebook/`, keyed by full content hashes. Images are limited to 8 MB and 24 million decoded pixels; native previews are at most 1.9 MB. Each notebook's rich preview directory is capped at 64 MB. In-memory image, diagram and formula caches are bounded; binary pixels are not included in model context. Refresh recreates evicted previews.
 
