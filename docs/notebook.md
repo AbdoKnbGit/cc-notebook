@@ -32,6 +32,7 @@ To enable the notebook for ordinary `claude` launches **in this project**, run `
 | --- | --- |
 | `/lab` | Open the notebook pane, restoring the last path if available |
 | `/lab demo` | Create or reopen the visual lab, preserving edits |
+| `/lab doctor`, `/lab graphics` | Check Python dependencies and explain the current terminal image mode |
 | `/lab new notebooks/name.nb.md` | Create a notebook without overwriting an existing file |
 | `/lab open <path>` | Open a saved notebook; switching notebooks stops the previous kernel |
 | `/lab select N`, `/lab run N` | Select or execute a Python cell by number |
@@ -76,6 +77,8 @@ Plots render through Claude Code's native `Image` element, both in the notebook 
 
 Terminal image support depends on the host and terminal graphics protocol. Supported terminals get native images; other terminals, including Windows Terminal, get lower-resolution coloured block previews through Raster. Desktop/VS Code surfaces receive native images only where the host exposes that component, with the original path otherwise. SSH sends a bounded PNG preview instead of a path the remote terminal cannot read. Resizing changes the image generation so a terminal can rescale it. There is no raw terminal-escape injection.
 
+The supported native terminal paths are Kitty/Ghostty and iTerm2 3.5+ (Claude Code 2.1.305+, `/tui fullscreen`, with `CLAUDE_CODE_ALT_SCREEN_FULL_REPAINT` unset). iTerm2 receives PNG bytes even locally; it cannot use file-path images. The host can still decline native rendering, in which case the notebook falls back. The notebook ignores `CLAUDE_CODE_FORCE_TERMINAL_IMAGES` on other or unidentified terminals, in tmux/screen, and in background sessions: a force flag does not verify protocol support. `/lab graphics` explains the selected mode. Windows Terminal's Sixel support cannot be used through the current Claude Code Image API; installing a Sixel encoder alone does not change that. See [Claude Code's image documentation](https://code.claude.com/docs/en/plugins/mods/gallery#image-and-client).
+
 Plots are immutable files addressed by their contents. Originals stay separate from previews. Pillow preserves aspect ratio and makes previews at most 2048 pixels per side and under 1.9 MB, within the host's 2 MiB byte limit. The small SSH memory cache holds at most three previews. Missing or invalid images fall back to text. Base64 is excluded from tool results and AI context; Claude can explicitly read a saved plot to inspect it.
 
 `.claude-notebook/` contains session runtime files and output caches. It is ignored by Git. Cache paths reject symlinks and Windows junctions. Cleanup touches only this notebook's unreferenced generated PNG names, never unrelated files or directories. History retains at most 20 superseded runs and trims before 32 MB; total cached state is capped at 64 MB per notebook, evicting the oldest outputs with an explicit rerun notice. Current results referenced by retained state survive ordinary pruning. Sources are never part of automatic cache cleanup. Export `.ipynb` for a portable bundle of sources and images; Markdown report image links are local.
@@ -111,6 +114,8 @@ On terminals without native images, newly executed Matplotlib line charts use th
 Mermaid uses the vendored `beautiful-mermaid` 1.1.3 text renderer: flowchart, state, sequence, class, ER and XY diagrams. Wide horizontal flowcharts retry vertically. Unsupported syntax, complex/oversized input and labels with unsupported terminal widths remain source code. The original Mermaid source stays editable and is preserved in `.ipynb`; Jupyter frontend support for rendering that source varies.
 
 Math uses Unicode notation when native images are unavailable. Typeset display equations use installed Typst/MiTeX, with Matplotlib MathText as a fallback; unsupported expressions retain their source. Typst may download its pinned MiTeX package on first use. Dark/light equation variants follow Claude's theme. This is mathematical notation, not a general LaTeX document compiler. Static self-contained SVG previews require Typst; SVG source is retained in Jupyter export even without it.
+
+When inline native math is unavailable, **Open typeset equation** links to the generated full-resolution PNG beside the readable text. A successful equation compile confirms the typesetter works; it does not mean the terminal can display native pixels.
 
 Image and equation previews live under `.claude-notebook/`, keyed by full content hashes. Images are limited to 8 MB and 24 million decoded pixels; native previews are at most 1.9 MB. Each notebook's rich preview directory is capped at 64 MB. In-memory image, diagram and formula caches are bounded; binary pixels are not included in model context. Refresh recreates evicted previews.
 

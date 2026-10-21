@@ -26,6 +26,8 @@ The visual demo combines explanations, Mermaid, equations and an inline image. C
 
 Use `/lab doctor` if Python dependencies are missing. On macOS or Linux, use `python3` if `python` is not installed. Running the launcher from a virtual environment selects that environment's Python.
 
+Use `/lab graphics` to check the image mode. Native terminal images require Kitty/Ghostty or iTerm2 3.5+ (Claude Code 2.1.305+ in fullscreen). Windows Terminal currently gets readable equations, data-based line charts and image thumbnails, with links to full-resolution images and typeset equations. The notebook ignores forced images on unsupported terminals to prevent corrupted placeholders. Installing a Sixel encoder cannot add the missing Sixel backend to Claude Code's plugin API.
+
 To enable the plugin for ordinary Claude Code launches in this workspace:
 
 ```powershell

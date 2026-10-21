@@ -3,6 +3,7 @@ import { commandOf, parseGenerated, TOOL, PANE } from '../hooks/notebook/model'
 import { fitPlot, plotSource, clearImageCache } from '../hooks/notebook/images'
 import { diagram, inlineMath, mathText, raster, imageUri } from '../hooks/notebook/rich'
 import { terminalPlot } from '../hooks/notebook/plot'
+import { notebookGraphics, graphicsReport } from '../hooks/notebook/graphics'
 
 const CMD = { origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 100 } } as const
 const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aL1sAAAAASUVORK5CYII='
@@ -217,8 +218,8 @@ test('Raster uses the terminal default for transparency rather than a guessed wh
   expect(raster({ ...pixels, rgba: 'bad' }, 10, 10, false)).toBe(null)
 })
 
-test('Windows fallback draws an inline Raster in output order without leaking pixels into model replies', async ($, on) => {
-  const w = world(on, { env: { OS: 'Windows_NT', TERM_PROGRAM: 'Windows_Terminal' } })
+test('forced Windows images still use Raster in output order without leaking pixels into model replies', async ($, on) => {
+  const w = world(on, { env: { OS: 'Windows_NT', WT_SESSION: 'test', CLAUDE_CODE_FORCE_TERMINAL_IMAGES: '1' } })
   const asset = { file: '/work/plot.png', preview: '/work/preview.png', pixels: '/work/pixels.json', width: 100, height: 50, preview_width: 100, preview_height: 50 }
   w.view.cells[1].run = { outputs: [
     { output_type: 'stream', text: 'Before image' },
@@ -234,10 +235,65 @@ test('Windows fallback draws an inline Raster in output order without leaking pi
   const ui = await mount($)
   const drawing = JSON.stringify(await ui.drawn())
   expect(await ui.find({ type: 'Raster' })).toBeDefined()
+  expect(await ui.find({ type: 'Image' })).toBeUndefined()
   expect(await ui.find({ type: 'Link', text: /Open original image/ })).toBeDefined()
   expect(drawing.indexOf('Before image')).toBeLessThan(drawing.indexOf('Raster'))
   expect(drawing.indexOf('Raster')).toBeLessThan(drawing.indexOf('After image'))
   expect(drawing).not.toContain('<Figure>')
+  await ui.unmount()
+})
+
+test('forced images cannot bypass unsupported terminals, multiplexers or background sessions', () => {
+  for (const env of [
+    { TERM_PROGRAM: 'Windows_Terminal' }, { WT_SESSION: 'test' },
+    { TERM_PROGRAM: 'vscode', TERM: 'xterm-kitty' }, { TERM: 'xterm-256color' },
+    { TERM_PROGRAM: 'ghostty', TMUX: '/tmp/tmux' }, { TERM: 'xterm-kitty', STY: 'screen' },
+    { TERM: 'xterm-kitty', CLAUDE_CODE_SESSION_KIND: 'background' },
+  ]) {
+    const graphics = notebookGraphics({ ...env, CLAUDE_CODE_FORCE_TERMINAL_IMAGES: '1' })
+    expect(graphics.native).toBe(false)
+    expect(graphics.forceIgnored).toBe(true)
+    expect(graphicsReport(graphics)).toContain('prevent broken image placeholders')
+  }
+  for (const flag of ['', '0', 'FALSE', ' off ', '   ']) expect(notebookGraphics({ CLAUDE_CODE_FORCE_TERMINAL_IMAGES: flag }).forceIgnored).toBe(false)
+})
+
+test('native graphics choose the correct local, SSH and iTerm2 transport', () => {
+  expect(notebookGraphics({ TERM_PROGRAM: 'ghostty', WT_SESSION: 'inherited' })).toMatchObject({ native: true, bytes: false })
+  expect(notebookGraphics({ KITTY_WINDOW_ID: '1' })).toMatchObject({ native: true, bytes: false })
+  expect(notebookGraphics({ TERM: 'xterm-kitty', SSH_CONNECTION: 'remote' })).toMatchObject({ native: true, bytes: true })
+  expect(notebookGraphics({ TERM: 'xterm', KITTY_WINDOW_ID: 'server-local', SSH_TTY: '/dev/pts/1' }).native).toBe(false)
+  expect(notebookGraphics({ TERM_PROGRAM: 'iTerm.app' })).toMatchObject({ native: true, bytes: true })
+  expect(notebookGraphics({ TERM_PROGRAM: 'iTerm.app', CLAUDE_CODE_ALT_SCREEN_FULL_REPAINT: '1' }).native).toBe(false)
+})
+
+test('iTerm2 receives PNG bytes for native typeset equations, never an unsupported file source', async ($, on) => {
+  const w = world(on, { env: { TERM_PROGRAM: 'iTerm.app' } })
+  const asset = { file: '/work/iterm-math.png', preview: '/work/iterm-math-preview.png', width: 80, height: 20, preview_width: 80, preview_height: 20 }
+  w.view.cells[0].rich = [{ kind: 'math', text: 'x^2', dark: asset }]
+  on('fs.stat', () => ({ value: { kind: 'file', size: 100, mtimeMs: 1, isLink: false } }))
+  on('fs.read', () => ({ value: { base64: PNG } }))
+  await ($ as any).session.start({ source: 'startup', cwd: '/work' })
+  await run($, 'new n.nb.md')
+  const ui = await mount($)
+  const image: any = await ui.find({ type: 'Image' })
+  expect(image?.props.source.png).toBe(PNG)
+  expect(image?.props.source.file).toBeUndefined()
+  await ui.unmount()
+})
+
+test('forced Windows equations retain readable math and the original typeset image link', async ($, on) => {
+  const w = world(on, { env: { WT_SESSION: 'test', CLAUDE_CODE_FORCE_TERMINAL_IMAGES: '1' } })
+  const asset = { file: '/work/math.png', preview: '/work/math-preview.png', width: 80, height: 20, preview_width: 80, preview_height: 20 }
+  w.view.cells[0].rich = [{ kind: 'math', text: 'x^2', dark: asset }]
+  await ($ as any).session.start({ source: 'startup', cwd: '/work' })
+  await run($, 'new n.nb.md')
+  const ui = await mount($)
+  expect(await ui.find({ type: 'Image' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: 'x²' })).toBeDefined()
+  expect((await ui.find({ type: 'Link', text: 'Open typeset equation' }))?.props.href).toBe(imageUri(asset.file))
+  expect((await run($, 'graphics')).text).toContain('Sixel')
+  expect((await run($, 'doctor')).text).toContain('prevent broken image placeholders')
   await ui.unmount()
 })
 

@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On, ElementTable, RenderSurface, RenderElement } from 'claude-code'
 import { actions, cleanText, commandOf, compactView, initialLab, outputText, parseGenerated, PANE, TOOL, type LabState, type NotebookView } from './model'
 import { plotSource, fitPlot, clearImageCache } from './images'
-import { canDrawIn, isSet } from './terminal'
+import { graphicsReport, notebookGraphics } from './graphics'
 import { diagram, inlineMath, mathText, raster, imageUri, type Pixels } from './rich'
 import { terminalPlot } from './plot'
 import type { ImageAsset, RichBlock, CellOutput } from '../../types'
@@ -15,6 +15,7 @@ let booting: Promise<void> | null = null
 let closing = false
 let imagesSupported = false
 let sendBytes = false
+let graphics = notebookGraphics({})
 let generation: AbortController | null = null
 const messageOf = (error: unknown) => error instanceof Error ? error.message : String(error)
 const pixelCache = new Map<string, Pixels>()
@@ -38,6 +39,7 @@ function probeImage($: EngineInterface, site: string, key: string, source: NonNu
       if (!result.deny) probed = true
       else if (/alt/i.test(result.deny)) {
         imagesSupported = false
+        graphics = { ...graphics, native: false, reason: 'Claude Code declined native images in this session. For iTerm2, use /tui fullscreen and restart Claude Code.' }
         probed = true
         await update($, done, n => n + 1)
         $.ui.invalidate('ui.render')
@@ -113,7 +115,7 @@ async function picture($: EngineInterface, elements: ElementTable, surface: Rend
 }
 
 async function richContent($: EngineInterface, elements: ElementTable, surface: RenderSurface, blocks: RichBlock[], width: number, key: string, light: boolean, site = PANE) {
-  const { Box, Text, Markdown, Code } = elements
+  const { Box, Text, Markdown, Code, Link } = elements
   const parts: RenderElement[] = []
   for (const [index, block] of blocks.slice(0, 80).entries()) {
     const id = `${key}-${index}`
@@ -125,7 +127,7 @@ async function richContent($: EngineInterface, elements: ElementTable, surface: 
     } else if (block.kind === 'math') {
       const asset = light ? block.light : block.dark
       if (asset && (surface !== 'terminal' || imagesSupported)) parts.push(await picture($, elements, surface, asset, width, id, light, mathText(block.text), site))
-      else parts.push(<Box key={id} marginY={1}><Text>{mathText(block.text)}</Text></Box>)
+      else parts.push(<Box key={id} flexDirection="column" marginY={1}><Text>{mathText(block.text)}</Text>{asset ? <Link href={imageUri(asset.file)} label="Open typeset equation" /> : null}</Box>)
     } else parts.push(<Markdown key={id} text={inlineMath(cleanText(block.text))} />)
   }
   return <Box flexDirection="column">{parts}</Box>
@@ -248,13 +250,23 @@ export async function startNotebook($: EngineInterface) {
     probeCount = 0
     probing = probed = false
     displayed.clear()
-    sendBytes = !!await $.env.get('SSH_CONNECTION') || !!await $.env.get('SSH_TTY')
-    imagesSupported = canDrawIn({ program: await $.env.get('TERM_PROGRAM') ?? '', term: await $.env.get('TERM') ?? '', kitty: !!await $.env.get('KITTY_WINDOW_ID'), tmux: !!await $.env.get('TMUX') || !!await $.env.get('STY'), ssh: sendBytes, background: ['bg', 'background'].includes(await $.env.get('CLAUDE_CODE_SESSION_KIND') ?? ''), engineForced: isSet(await $.env.get('CLAUDE_CODE_FORCE_TERMINAL_IMAGES')), modForced: false })
+    // Literal names are required by the host's hook capability scanner.
+    graphics = notebookGraphics({
+      TERM_PROGRAM: await $.env.get('TERM_PROGRAM'), TERM: await $.env.get('TERM'),
+      KITTY_WINDOW_ID: await $.env.get('KITTY_WINDOW_ID'), WT_SESSION: await $.env.get('WT_SESSION'),
+      TMUX: await $.env.get('TMUX'), STY: await $.env.get('STY'),
+      SSH_CONNECTION: await $.env.get('SSH_CONNECTION'), SSH_TTY: await $.env.get('SSH_TTY'),
+      CLAUDE_CODE_SESSION_KIND: await $.env.get('CLAUDE_CODE_SESSION_KIND'),
+      CLAUDE_CODE_FORCE_TERMINAL_IMAGES: await $.env.get('CLAUDE_CODE_FORCE_TERMINAL_IMAGES'),
+      CLAUDE_CODE_ALT_SCREEN_FULL_REPAINT: await $.env.get('CLAUDE_CODE_ALT_SCREEN_FULL_REPAINT'),
+    })
+    sendBytes = graphics.bytes
+    imagesSupported = graphics.native
     await $.tool.register({ name: 'notebook', isDeferred: false,
       description: 'Read, edit and run the local Lab notebook. Three cell types: markdown, python, ai. Use status to read the current revision; supply that revision for editing/running. Python shares a persistent kernel. Editing NEVER executes. run_all restarts the kernel and executes saved Python in order, stopping on error; it does not regenerate AI. Outputs are bounded text and image file paths, not base64. Read image paths with Read when visual inspection is needed.',
       inputSchema: { type: 'object', properties: { action: { type: 'string', enum: [...actions] }, path: { type: 'string' }, revision: { type: 'string' }, id: { type: 'string' }, type: { type: 'string', enum: ['markdown', 'python', 'ai'] }, source: { type: 'string' }, direction: { type: 'string', enum: ['up', 'down'] }, destination: { type: 'string' }, format: { type: 'string', enum: ['ipynb', 'markdown'] }, timeout: { type: 'number', minimum: 1, maximum: 300 } }, required: ['action'], additionalProperties: false },
     })
-    await $.command.register({ name: 'lab', description: 'Python lab notebook: Markdown, Python and AI cells', argumentHint: '[demo|new|open|run|generate|vars|restart|interrupt|export|doctor]', immediate: true })
+    await $.command.register({ name: 'lab', description: 'Python lab notebook: Markdown, Python and AI cells', argumentHint: '[demo|new|open|run|generate|vars|restart|interrupt|export|doctor|graphics]', immediate: true })
 }
 
 export async function stopNotebook($: EngineInterface, reason: string) {
@@ -338,8 +350,9 @@ export function registerNotebook(on: On) {
       }
       if (action === 'doctor') {
         python = String(await $.store.get('lab-python') || await $.env.get('CLAUDE_NOTEBOOK_PYTHON') || (await $.env.get('OS') === 'Windows_NT' ? 'python' : 'python3'))
-        return { text: JSON.stringify(await invoke($, 'doctor'), null, 2) }
+        return { text: JSON.stringify(await invoke($, 'doctor'), null, 2) + '\n\n' + graphicsReport(graphics) }
       }
+      if (action === 'graphics') return { text: graphicsReport(graphics) }
       if (action === 'show') {
         await openPane($)
         if (!s.view) {
@@ -366,7 +379,7 @@ export function registerNotebook(on: On) {
         await perform($, 'export', { format: destination.action, destination: destination.value || undefined })
       }
       else if (action === 'import') await perform($, 'import', { source: value, path: undefined })
-      else return { text: 'Use /lab [demo|new <path>|open <path>|add markdown/python/ai|select N|run N|generate N|all|vars|restart|interrupt|refresh|export ipynb/markdown|import <ipynb>|python <path>|doctor].' }
+      else return { text: 'Use /lab [demo|new <path>|open <path>|add markdown/python/ai|select N|run N|generate N|all|vars|restart|interrupt|refresh|export ipynb/markdown|import <ipynb>|python <path>|doctor|graphics].' }
       if (action !== 'interrupt') await openPane($)
       return { text: (await read($, lab)).notice || `Notebook: ${action} complete.` }
     } catch (error) { return { text: `Notebook: ${messageOf(error)}` } }
@@ -393,6 +406,7 @@ export function registerNotebook(on: On) {
       <Box justifyContent="space-between"><Text bold color="claude">LAB NOTEBOOK</Text><Text dimColor>{s.cost === null ? '' : `$${s.cost.toFixed(3)} session`}</Text></Box>
       <Text bold>{v?.title ?? 'Your next experiment'}</Text>
       <Text dimColor>{s.busy ? `● ${s.busy}…` : v?.kernel.alive ? '● Python ready · variables retained' : '○ Python stopped · saved outputs remain'}</Text>
+      {e.surface === 'terminal' && graphics.forceIgnored ? <Text dimColor>Native images unavailable here; using readable previews. /lab graphics explains why.</Text> : null}
       {s.error ? <Text color="red">{cleanText(s.error)}</Text> : null}
       {s.notice ? <Text color="success">{cleanText(s.notice)}</Text> : null}
       {!v ? <Box flexDirection="column" marginTop={1}>
