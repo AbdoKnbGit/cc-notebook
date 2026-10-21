@@ -110,6 +110,11 @@ class KernelIntegrationTests(unittest.TestCase):
         self.call("run", id=last)
         self.call("update", id=first, source="x = 4")
         self.assertEqual(self.view["cells"][-1]["status"], "stale")
+        import nbformat
+        exported = self.call("export", format="ipynb")
+        book = nbformat.read(exported["destination"], as_version=4)
+        self.assertEqual(book.cells[-1].outputs, [])
+        self.assertTrue(book.cells[-1].metadata.claude_notebook.stale)
 
     def test_generated_explanation_tracks_results_not_only_source(self):
         self.code("x = 1\nx")
@@ -156,6 +161,52 @@ class KernelIntegrationTests(unittest.TestCase):
         self.call("run_all")
         self.assertEqual(self.view["cells"][1]["status"], "error")
         self.assertIsNone(self.view["cells"][-1]["run"])
+
+
+class JupyterImportTests(unittest.TestCase):
+    def test_export_import_preserves_cell_types_and_sources_without_execution(self):
+        import nbformat
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            service = Service(root, root / ".runtime")
+            sources = [
+                cell("markdown", "# Results λ\n\n```python\nexample = 1\n```"),
+                cell("python", "from pathlib import Path\nPath('should-not-exist').write_text('ran')\n"),
+                cell("ai", "Explain the result, then suggest another experiment."),
+            ]
+            path = root / "original.nb.md"
+            service.docs.save(path, {"title": "Round trip", "cells": sources}, create=True)
+            service.handle({"action": "open", "path": str(path)})
+            exported = service.handle({"action": "export", "format": "ipynb"})
+            book = nbformat.read(exported["destination"], as_version=4)
+            nbformat.validate(book)
+            imported = service.handle({"action": "import", "source": exported["destination"], "path": "imported.nb.md"})
+            self.assertEqual([(c["type"], c["source"]) for c in imported["cells"]], [(c["type"], c["source"]) for c in sources])
+            self.assertFalse(imported["kernel"]["alive"])
+            self.assertTrue(all(c["run"] is None for c in imported["cells"]))
+            self.assertFalse((root / "should-not-exist").exists())
+            before = (root / "imported.nb.md").read_bytes()
+            with self.assertRaisesRegex(ValueError, "already exists"):
+                service.handle({"action": "import", "source": exported["destination"], "path": "imported.nb.md"})
+            self.assertEqual((root / "imported.nb.md").read_bytes(), before)
+
+    def test_standard_jupyter_import_discards_old_execution_outputs(self):
+        import nbformat
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            service = Service(root, root / ".runtime")
+            book = nbformat.v4.new_notebook(cells=[
+                nbformat.v4.new_markdown_cell("# From Jupyter"),
+                nbformat.v4.new_code_cell("x = 7\nx", execution_count=9, outputs=[nbformat.v4.new_output("execute_result", data={"text/plain": "99"}, execution_count=9)]),
+            ])
+            source = root / "from-jupyter.ipynb"
+            nbformat.write(book, source)
+            view = service.handle({"action": "import", "source": str(source)})
+            self.assertEqual(Path(view["path"]).name, "from-jupyter.nb.md")
+            self.assertEqual([c["type"] for c in view["cells"]], ["markdown", "python"])
+            self.assertEqual(view["cells"][1]["source"], "x = 7\nx")
+            self.assertTrue(all(c["run"] is None for c in view["cells"]))
+            self.assertFalse(service.kernel.alive)
 
 
 if __name__ == "__main__":

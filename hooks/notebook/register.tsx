@@ -224,7 +224,10 @@ export function registerNotebook(on: On) {
         else await select($, id)
       } else if (action === 'all') await perform($, 'run_all')
       else if (['vars', 'restart', 'interrupt', 'status', 'refresh'].includes(action)) await perform($, action === 'refresh' ? 'status' : action)
-      else if (action === 'export') await perform($, 'export', { format: value || 'ipynb' })
+      else if (action === 'export') {
+        const destination = commandOf(value || 'ipynb')
+        await perform($, 'export', { format: destination.action, destination: destination.value || undefined })
+      }
       else if (action === 'import') await perform($, 'import', { source: value, path: undefined })
       else return { text: 'Use /lab [new <path>|open <path>|add markdown/python/ai|select N|run N|generate N|all|vars|restart|interrupt|refresh|export ipynb/markdown|import <ipynb>|python <path>|doctor].' }
       if (action !== 'interrupt') await openPane($)

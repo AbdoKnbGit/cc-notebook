@@ -1,6 +1,6 @@
 {
   "name": "cc-notebook",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Cell-based Markdown and persistent Python notebooks inside Claude Code.",
   "author": {
     "name": "AbdoKnbGit",

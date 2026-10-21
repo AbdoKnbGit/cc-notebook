@@ -76,6 +76,19 @@ test('notebook opens across surfaces without starting Python; editing never exec
   await ui.unmount()
 })
 
+test('export accepts a new filename with spaces and import clears the active path', async ($, on) => {
+  const w = world(on)
+  await run($, 'new n.nb.md')
+  await run($, 'export ipynb "C:\\my work\\results v2.ipynb"')
+  expect(w.calls.at(-1)).toMatchObject({ action: 'export', format: 'ipynb', destination: 'C:\\my work\\results v2.ipynb' })
+  await run($, 'export markdown')
+  expect(w.calls.at(-1).format).toBe('markdown')
+  expect(w.calls.at(-1).destination).toBeUndefined()
+  await run($, 'import "C:\\my work\\import.ipynb"')
+  expect(w.calls.at(-1).source).toBe('C:\\my work\\import.ipynb')
+  expect(w.calls.at(-1).path).toBeUndefined()
+})
+
 test('conflicting save retains the editor draft and reports the conflict', async ($, on) => {
   const w = world(on, { failedSave: true })
   await run($, 'new n.nb.md')

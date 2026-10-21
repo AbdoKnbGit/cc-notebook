@@ -38,13 +38,27 @@ The demo data is synthetic and runs without network access. Generation uses the 
 | `/lab all` | Restart, then run saved Python in order; stop at the first failure |
 | `/lab interrupt`, `/lab restart` | Cancel generation/execution, or clear the live Python state |
 | `/lab vars`, `/lab refresh` | Inspect live variables, or reload external source edits |
-| `/lab export ipynb` | Export sources and valid cached outputs; refuses to overwrite |
-| `/lab export markdown` | Export a local report with links to cached plots |
+| `/lab export ipynb [path]` | Export sources and valid cached outputs; optional new filename; refuses to overwrite |
+| `/lab export markdown [path]` | Export a local report with links to cached plots |
 | `/lab import <file.ipynb>` | Import sources into a new `.nb.md`; old execution outputs are not imported |
 
 The pane has cell editing, reordering, deletion, execution, generation, and variable controls. Markdown cells use Claude Code's native Markdown renderer. Save/cancel a draft before changing cells. A disk conflict keeps the draft. Cancel or copy the draft before refreshing. Notebook source and export paths must remain inside the current workspace.
 
 Claude can use the registered `notebook` tool to read, edit, and run cells. Mutating tool calls honor the session permission verdict. Python runs with the permissions of the selected local interpreter, as ordinary Jupyter does; it is not a sandbox. Cells can access the local filesystem and network when explicitly run.
+
+## File format and Jupyter
+
+`.nb.md` is a Markdown source file with a `claude-notebook` version header and a `claude-cell` metadata comment before each fenced cell. The metadata's `type` identifies `markdown`, `python`, or `ai`. An ordinary `.md` file is not automatically executable. Python code is sent to the local IPython kernel only when Run is requested.
+
+Jupyter's standard file extension is `.ipynb`. Export converts Python cells to code cells, Markdown to Markdown, and AI instructions to labeled Markdown with metadata so importing them back restores their AI cell type. Valid saved outputs are included; stale outputs are omitted. The live kernel and its in-memory variables are not exported. Import creates fresh cells without executing them or restoring old outputs.
+
+If an export already exists, use a new filename, for example `/lab export ipynb "notebooks/results v2.ipynb"`. Both imports and exports must stay inside the workspace.
+
+## How Generate works
+
+Generate calls Claude Code's `model.complete` API with the session's selected model. It uses the host's authentication rather than requiring a separate key in this plugin. This is a separate model completion, not a new message in the main conversation. The request includes the AI cell instruction, up to 12 preceding cells with bounded source and text outputs, and the variable summary. It does not send the full chat history or cached image bytes.
+
+The reply must contain 1–8 Markdown or Python cells. Valid cells are inserted after the AI instruction and saved; generated Python waits for an explicit Run. Invalid replies or changes to the source/results during generation leave the notebook unchanged. Generation consumes model usage; local Python execution does not itself make a model request.
 
 ## State and reproducibility
 

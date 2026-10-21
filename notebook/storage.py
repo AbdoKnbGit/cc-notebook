@@ -2,6 +2,7 @@
 from contextlib import contextmanager
 import os
 from pathlib import Path
+import stat
 
 
 def safe_cache(workspace: Path, *parts: str) -> Path:
@@ -11,8 +12,15 @@ def safe_cache(workspace: Path, *parts: str) -> Path:
         if not part or part in (".", "..") or "/" in part or "\\" in part:
             raise ValueError("Invalid cache path.")
         current = current / part
-        if current.is_symlink() or (hasattr(current, "is_junction") and current.is_junction()):
-            raise ValueError("Notebook cache must not contain symbolic links or junctions.")
+        try:
+            info = current.lstat()
+        except FileNotFoundError:
+            pass
+        else:
+            # Path.is_junction() only exists on Python 3.12+. lstat exposes
+            # reparse points on older supported Windows interpreters too.
+            if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0):
+                raise ValueError("Notebook cache must not contain symbolic links or junctions.")
         if not current.resolve().is_relative_to(root):
             raise ValueError("Notebook cache escaped the workspace.")
     return current

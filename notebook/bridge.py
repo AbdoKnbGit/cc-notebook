@@ -19,6 +19,7 @@ import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from socketserver import TCPServer
 from storage import safe_cache
 
 
@@ -78,6 +79,14 @@ def process_alive(pid):
         return True
 
 
+class LoopbackServer(ThreadingHTTPServer):
+    def server_bind(self):
+        # HTTPServer normally reverse-resolves the bind address. This private
+        # numeric loopback listener needs no DNS; macOS lookup can stall startup.
+        TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+
+
 def serve(workspace, runtime, owner, host_pid=0):
     from document import atomic_write
     from service import Service
@@ -125,7 +134,7 @@ def serve(workspace, runtime, owner, host_pid=0):
             if action == "shutdown":
                 threading.Thread(target=server.shutdown, daemon=True).start()
 
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    server = LoopbackServer(("127.0.0.1", 0), Handler)
     server.daemon_threads = True
     atomic_write(runtime / "bridge.json", json.dumps({"port": server.server_port, "token": token, "pid": os.getpid(), "owner": owner}))
     try:

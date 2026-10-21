@@ -9,13 +9,21 @@ import unittest
 import urllib.error
 import urllib.request
 from pathlib import Path
+from http.server import BaseHTTPRequestHandler
+from unittest.mock import patch
 
-from bridge import request, read_info, runtime_dir, process_alive
+from bridge import request, read_info, runtime_dir, process_alive, LoopbackServer
 from document import Documents, cell
 from storage import safe_cache, file_lock
 
 
 class BridgeTests(unittest.TestCase):
+    def test_loopback_listener_does_not_require_dns(self):
+        with patch("socket.getfqdn", side_effect=AssertionError("DNS is unavailable")):
+            with LoopbackServer(("127.0.0.1", 0), BaseHTTPRequestHandler) as server:
+                self.assertEqual(server.server_name, "127.0.0.1")
+                self.assertGreater(server.server_port, 0)
+
     def test_host_liveness_on_this_os(self):
         self.assertTrue(process_alive(os.getpid()))
         child = subprocess.Popen([sys.executable, "-c", "pass"])
@@ -27,7 +35,11 @@ class BridgeTests(unittest.TestCase):
             root = Path(directory)
             runtime = runtime_dir(root, "test")
             command = [sys.executable, str(Path(__file__).with_name("bridge.py")), "start", "--workspace", directory, "--session", "test"]
-            self.assertTrue(json.loads(subprocess.check_output(command, encoding="utf-8"))["ok"])
+            started = subprocess.run(command, capture_output=True, encoding="utf-8", timeout=45)
+            if started.returncode:
+                log = runtime / "bridge.log"
+                self.fail(f"Bridge startup failed: {started.stdout}\n{started.stderr}\n" + (log.read_text(encoding="utf-8", errors="replace")[-8000:] if log.exists() else "No bridge log."))
+            self.assertTrue(json.loads(started.stdout)["ok"])
             try:
                 first = read_info(runtime)
                 self.assertTrue(json.loads(subprocess.check_output(command, encoding="utf-8"))["ok"])
