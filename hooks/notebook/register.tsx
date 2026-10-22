@@ -260,12 +260,15 @@ function toolView(view: NotebookView, action: string, args: Record<string, unkno
     cells = []
   }
   const cellNumbers = cells.map(c => view.cells.findIndex(item => item.id === c.id) + 1)
-  const focusCellNumber = focusCellId ? view.cells.findIndex(c => c.id === focusCellId) + 1 : undefined
+  const currentFocusNumber = focusCellId ? view.cells.findIndex(c => c.id === focusCellId) + 1 : 0
+  const previousFocusNumber = focusCellId ? (previous?.cells.findIndex(c => c.id === focusCellId) ?? -1) + 1 : 0
+  const focusCellNumber = currentFocusNumber || previousFocusNumber || undefined
+  const focusCellType = view.cells.find(c => c.id === focusCellId)?.type ?? previous?.cells.find(c => c.id === focusCellId)?.type
 
   return {
     ...compact,
     cells,
-    _notebookOperation: { action, cellId, focusCellId, focusCellNumber, cellNumbers, cellType: args.type, partial, cellCount: view.cells.length },
+    _notebookOperation: { action, cellId, focusCellId, focusCellNumber, cellNumbers, cellType: focusCellType ?? args.type, partial, cellCount: view.cells.length },
   }
 }
 
@@ -441,7 +444,8 @@ export function registerNotebook(on: On) {
     const operation = result._notebookOperation
     if (!operation) return next(e)
     const action = operation.action
-    const executions = ['run', 'run_all'].includes(action)
+    const fullSnapshot = ['status', 'open', 'new', 'demo', 'import'].includes(action)
+    const executions = ['run', 'run_all'].includes(action) || fullSnapshot
       ? result.cells.filter(c => c.run && (c.run.outputs?.length || c.run.images?.length))
       : []
     const focused = operation.focusCellId ? result.cells.find(c => c.id === operation.focusCellId) : undefined
@@ -457,6 +461,8 @@ export function registerNotebook(on: On) {
       ? `Added ${typeLabel(focused.type)} cell · Cell ${number}`
       : action === 'run' && focused
         ? `Cell ${number} · ${typeLabel(focused.type)} · ${focused.status}`
+        : action === 'remove' && operation.focusCellNumber
+          ? `Removed cell · Cell ${operation.focusCellNumber}`
         : action === 'run_all'
           ? `Ran ${executions.length} Python cell${executions.length === 1 ? '' : 's'}`
           : focused
@@ -478,7 +484,7 @@ export function registerNotebook(on: On) {
         }
       }
     }
-    return <Box flexDirection="column"><Text bold>{result.title} · {operationTitle}</Text>{sourcePreview ? <Text>{sourcePreview}</Text> : null}{pictures}{action === 'add' && focused?.type === 'ai' ? <Text dimColor>AI instructions have no execution output. Choose Generate cells in /lab when you want Claude to apply them.</Text> : null}{action === 'add' && focused?.type === 'python' ? <Text dimColor>Python cell added; run it when you want to execute it.</Text> : null}{action === 'update' && focused?.type === 'python' ? <Text dimColor>Source saved. Run this cell to refresh its output.</Text> : null}{executions.length ? <Text dimColor>Only output from this operation is shown. Open /lab for the full notebook.</Text> : <Text dimColor>Open /lab to inspect the notebook.</Text>}</Box>
+    return <Box flexDirection="column"><Text bold>{result.title} · {operationTitle}</Text>{sourcePreview ? <Text>{sourcePreview}</Text> : null}{pictures}{action === 'add' && focused?.type === 'ai' ? <Text dimColor>AI instructions have no execution output. Choose Generate cells in /lab when you want Claude to apply them.</Text> : null}{action === 'add' && focused?.type === 'python' ? <Text dimColor>Python cell added; run it when you want to execute it.</Text> : null}{action === 'update' && focused?.type === 'python' ? <Text dimColor>Source saved. Run this cell to refresh its output.</Text> : null}{executions.length ? <Text dimColor>{fullSnapshot ? 'Saved output is grouped under the cell that produced it.' : 'Only output from this operation is shown. Open /lab for the full notebook.'}</Text> : <Text dimColor>Open /lab to inspect the notebook.</Text>}</Box>
   })
 
   on('tool.call', { tool: new RegExp(`^${TOOL}$`) }, async ($, e) => {
@@ -495,7 +501,7 @@ export function registerNotebook(on: On) {
           if (answer !== 'Allow once') return { deny: 'Notebook action cancelled.' }
         }
       }
-      const previous = action === 'run_all' ? (await read($, lab)).view : null
+      const previous = (await read($, lab)).view
       const result = await perform($, action, args)
       const payload = Array.isArray(result.cells) ? toolView(result as unknown as NotebookView, action, args, previous) : result
       // Claude Code validates tool replies as text content. Returning an object

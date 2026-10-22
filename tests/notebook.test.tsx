@@ -229,6 +229,31 @@ test('adding an AI cell hides old executions and shows only the new instruction'
   await ui.unmount()
 })
 
+test('full notebook results stay attached to their own cells', async ($, on) => {
+  const w = world(on, { env: { TERM_PROGRAM: 'ghostty', TERM: 'xterm-ghostty' } })
+  const image = '/work/cell-two.png'
+  w.view.cells[0].run = { outputs: [{ output_type: 'stream', text: 'FIRST_CELL_OUTPUT' }], images: [], duration_ms: 2, at: 1 }
+  w.view.cells[1].run = { outputs: [{ output_type: 'display_data', data: { 'text/plain': 'SECOND_CELL_FIGURE' } }], images: [image], image_info: { [image]: { preview: image, width: 400, height: 200, preview_width: 400, preview_height: 200 } }, duration_ms: 3, at: 2 }
+  w.view.cells[0].status = 'ok'
+  on('fs.stat', () => ({ value: { kind: 'file', size: 1000, mtimeMs: 1, isLink: false } }))
+  on('fs.read', () => ({ value: { base64: PNG } }))
+  await ($ as any).session.start({ source: 'startup', cwd: '/work' })
+  const reply = await $.tool.call({ tool: TOOL, action: 'status' } as never)
+  const payload = JSON.parse(reply.result as string)
+  expect(payload.cells[0].run.outputs[0].text).toBe('FIRST_CELL_OUTPUT')
+  expect(payload.cells[0].run.images).toEqual([])
+  expect(payload.cells[1].run.outputs[0].text).toBe('SECOND_CELL_FIGURE')
+  expect(payload.cells[1].run.images).toEqual([image])
+  const ui = await $.ui.mount({ plugin: 'cc-notebook', surface: 'terminal', component: 'ToolResult', requestId: 'full-notebook-status', props: { tool_use_id: 'full-notebook-status', tool: TOOL, output: JSON.stringify(reply), isErrored: false }, viewport: { columns: 100, rows: 40 } } as any)
+  expect(await ui.find({ type: 'Text', text: /Cell 1 · ok/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /FIRST_CELL_OUTPUT/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /Cell 2 · ready/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /SECOND_CELL_FIGURE/ })).toBeDefined()
+  const shown: any = await ui.find({ type: 'Image' })
+  expect(shown?.props.source.file).toBe(image)
+  await ui.unmount()
+})
+
 test('SSH uses cached PNG bytes and retains the original image path', async ($, on) => {
   const w = world(on, { env: { SSH_CONNECTION: 'test', TERM: 'xterm-kitty' } })
   const file = '/work/.claude-notebook/outputs/test/remote-preview.png'
