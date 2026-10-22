@@ -1,6 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 import { commandOf, initialLab, notebookContext, parseGenerated, TOOL, PANE } from '../hooks/notebook/model'
-import { editPage, replacePage } from '../hooks/notebook/editor'
+import { editorRows } from '../hooks/notebook/editor'
 import { fitPlot, plotSource, clearImageCache } from '../hooks/notebook/images'
 import { diagram, inlineMath, mathText, raster, imageUri } from '../hooks/notebook/rich'
 import { terminalPlot } from '../hooks/notebook/plot'
@@ -64,7 +64,7 @@ test('missing Python gives an actionable error without attempting downloads', as
   expect(spawned).toBe(false)
 })
 
-function world(on: any, options: { answer?: string; deny?: boolean; failedSave?: boolean; missingPython?: boolean; env?: Record<string, string> } = {}) {
+function world(on: any, options: { answer?: string; deny?: boolean; failedSave?: boolean; missingPython?: boolean; toolMissing?: boolean; toolBroken?: boolean; env?: Record<string, string> } = {}) {
   mock.store(on)
   const clock = mock.clock(on)
   mock.env(on, { DISABLE_AUTOUPDATER: '1', CLAUDE_NOTEBOOK_PYTHON: 'python', ...options.env })
@@ -72,10 +72,14 @@ function world(on: any, options: { answer?: string; deny?: boolean; failedSave?:
   on('session.id', () => ({ value: 'test-session' }))
   on('session.model', () => ({ value: 'claude-sonnet-4-6' }))
   on('command.register', () => ({ value: undefined }))
-  on('tool.register', () => ({ value: undefined }))
+  let toolConnected = !options.toolMissing && !options.toolBroken
+  const registrations: any[] = [], focuses: any[] = []
+  on('tool.register', (_$: any, e: any) => { registrations.push(e); toolConnected = !options.toolBroken; return { value: { tool: TOOL } } })
+  on('tool.list', () => ({ value: toolConnected ? [{ name: TOOL, description: 'Lab notebook', mcp: true }] : [] }))
   on('session.start', () => ({ cwd: '/work' }))
   on('tool.check', () => ({ decision: options.deny ? 'deny' : 'allow', reason: 'Test permission policy' }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('ui.focus', (_$: any, e: any) => { focuses.push(e); return {} })
   on('ui.toast', () => ({ value: undefined }))
   const view: any = sample(), calls: any[] = [], prompts: string[] = [], bridgeCommands: any[] = []
   on('model.complete', (_$: any, e: any) => {
@@ -101,7 +105,7 @@ function world(on: any, options: { answer?: string; deny?: boolean; failedSave?:
     }
     return { value: { exitCode: 0, stdout: JSON.stringify(error ? { ok: false, error } : { ok: true, result }), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
   })
-  return { view, calls, prompts, clock, bridgeCommands }
+  return { view, calls, prompts, clock, bridgeCommands, focuses, registrations }
 }
 
 test('notebook command preserves quoted Windows paths and validates AI JSON', () => {
@@ -452,26 +456,21 @@ test('completed Python cells can expand their source without rerunning', async (
   await ui.unmount()
 })
 
-test('paged editing preserves unseen lines, blank lines and the latest typing when saved', async ($, on) => {
+test('the editor keeps complete source, blank lines and latest typing when saved', async ($, on) => {
   const w = world(on)
-  const original = Array.from({ length: 24 }, (_, i) => `line ${i + 1}`).join('\n') + '\n\n'
+  const original = Array.from({ length: 300 }, (_, i) => `line ${i + 1} ${'long '.repeat(20)}`).join('\n') + '\n\n'
   w.view.cells[0].source = original
   await run($, 'new n.nb.md')
   await run($, 'edit 1')
   const ui = await mount($)
   const first = await ui.find({ type: 'Input' })
-  expect(first.props.value).toBe(editPage(original).text)
-  expect(first.props.value).toContain('line 1')
-  expect(first.props.value).not.toContain('line 24')
-  await input(ui, 'edited first page', 'change')
-  await ui.press({ key: 'lab-edit-next' })
-  const second = await ui.find({ type: 'Input' })
-  expect(second.props.value).toContain('line 9')
-  expect(second.props.key).not.toBe(first.props.key)
-  await input(ui, second.props.value.replace('line 9', 'edited ninth line'), 'change')
+  expect(first.props.value).toBe(original)
+  const edited = original + 'new final line\n\n'
+  await input(ui, edited, 'change')
+  expect((await ui.find({ type: 'Input' })).props.key).toBe(first.props.key)
   expect(w.view.cells[0].source).toBe(original)
   await ui.press({ key: 'lab-save-edit' })
-  expect(w.view.cells[0].source).toBe(['edited first page', 'edited ninth line', ...Array.from({ length: 15 }, (_, i) => `line ${i + 10}`), '', ''].join('\n'))
+  expect(w.view.cells[0].source).toBe(edited)
   expect(w.calls.filter(c => c.action === 'update').length).toBe(1)
   expect(w.calls.some(c => c.action === 'run')).toBe(false)
   await ui.press({ key: 'lab-edit' })
@@ -479,7 +478,50 @@ test('paged editing preserves unseen lines, blank lines and the latest typing wh
   await ui.press({ key: 'lab-cancel-edit' })
   expect(w.view.cells[0].source).not.toContain('do not save')
   await ui.unmount()
-  expect(replacePage('', 0, 1, 'new\n')).toEqual({ draft: 'new\n', draftEnd: 2 })
+  for (const rows of [8, 12, 24, 60, 100]) for (const columns of [12, 24, 40, 80, 160]) {
+    expect(editorRows(rows, columns)).toBeLessThanOrEqual(Math.max(2, rows - 3))
+    expect(editorRows(rows, columns)).toBeGreaterThanOrEqual(2)
+  }
+})
+
+test('missing tools reconnect before the notebook snapshot reaches Claude', async ($, on) => {
+  const w = world(on, { toolMissing: true })
+  on('prompt.submit', (_$: any, e: any) => ({ text: e.text, context: e.context }))
+  await run($, 'new n.nb.md')
+  const reply = await $.prompt.submit({ text: 'Change cell 2 and run it', wait: false, origin: { kind: 'composer' } })
+  expect(w.registrations.length).toBe(1)
+  expect(w.registrations[0].isDeferred).toBe(false)
+  expect(reply.context?.join('\n')).toContain(TOOL)
+  expect(reply.context?.join('\n')).toContain('available in this session')
+  expect(w.calls.some(c => c.action === 'run')).toBe(false)
+})
+
+test('tool diagnostics distinguish a broken connection from a successful registration', async ($, on) => {
+  const w = world(on, { toolBroken: true })
+  const result = await run($, 'tools')
+  expect(w.registrations.length).toBe(1)
+  expect(result.text).toContain('not available')
+  expect(result.text).toContain('/reload-plugins')
+  expect(w.calls.length).toBe(0)
+})
+
+test('a broken native tool supplies the exact same-kernel CLI connection without executing Python', async ($, on) => {
+  const w = world(on, { toolBroken: true })
+  on('prompt.submit', (_$: any, e: any) => ({ text: e.text, context: e.context }))
+  await run($, 'new n.nb.md')
+  const check = await run($, 'tools')
+  expect(check.text).toContain('status check succeeded')
+  const reply = await $.prompt.submit({ text: 'Change cell 2 and run it', wait: false, origin: { kind: 'composer' } })
+  const text = reply.context?.join('\n') || ''
+  expect(text).toContain('SAME live notebook kernel')
+  expect(text).toContain('/notebook/bridge.py')
+  expect(text).toContain('/work/.claude-notebook/runtime/test')
+  expect(text).toContain('permission checks')
+  expect(w.calls.some(c => c.action === 'run')).toBe(false)
+  await run($, 'edit 2')
+  const editing = await $.prompt.submit({ text: 'Change cell 2', wait: false, origin: { kind: 'composer' } })
+  expect(editing.context?.join('\n')).toContain('Finish the open cell edit')
+  expect(editing.context?.join('\n')).not.toContain('/notebook/bridge.py')
 })
 
 test('complex LaTeX fallback leads with its full-resolution link instead of pages of raw commands', async ($, on) => {

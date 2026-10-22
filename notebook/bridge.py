@@ -169,7 +169,7 @@ def serve(workspace, runtime, owner, host_pid=0):
             pass
 
 
-def start(workspace, runtime):
+def start(workspace, runtime, host_pid=0):
     runtime.mkdir(parents=True, exist_ok=True)
     # OS file locking releases automatically on process death (no stale PID lock).
     with (runtime / "start.lock").open("a+b") as lock:
@@ -189,7 +189,10 @@ def start(workspace, runtime):
         except (OSError, ValueError, KeyError):
             pass
         owner = secrets.token_hex(16)
-        command = [sys.executable, str(Path(__file__).resolve()), "serve", "--workspace", str(workspace), "--runtime", str(runtime), "--owner", owner, "--host-pid", str(os.getppid())]
+        # The parent can be a short-lived process runner, not Claude itself.
+        # Only watch an explicitly supplied durable host PID. Otherwise the
+        # session.end hook and idle timeout own cleanup of this session bridge.
+        command = [sys.executable, str(Path(__file__).resolve()), "serve", "--workspace", str(workspace), "--runtime", str(runtime), "--owner", owner, "--host-pid", str(host_pid)]
         kwargs = {"creationflags": subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt" else {"start_new_session": True}
         with (runtime / "bridge.log").open("ab") as log:
             proc = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=log, stderr=log, cwd=workspace, **kwargs)
@@ -223,7 +226,7 @@ def main():
         if args.mode == "serve":
             serve(args.workspace, runtime, args.owner, args.host_pid)
         elif args.mode == "start":
-            emit({"ok": True, "result": start(Path(args.workspace).resolve(), runtime)})
+            emit({"ok": True, "result": start(Path(args.workspace).resolve(), runtime, args.host_pid)})
         elif args.mode == "doctor":
             import importlib.util
             import shutil

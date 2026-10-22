@@ -35,13 +35,18 @@ class BridgeTests(unittest.TestCase):
             root = Path(directory)
             runtime = runtime_dir(root, "test")
             command = [sys.executable, str(Path(__file__).with_name("bridge.py")), "start", "--workspace", directory, "--session", "test"]
-            started = subprocess.run(command, capture_output=True, encoding="utf-8", timeout=45)
+            # Hosts can launch the bridge through a helper that immediately
+            # exits. Its PID must not be treated as the notebook session owner.
+            launcher = [sys.executable, '-c', 'import subprocess, sys; raise SystemExit(subprocess.run(sys.argv[1:]).returncode)', *command]
+            started = subprocess.run(launcher, capture_output=True, encoding="utf-8", timeout=45)
             if started.returncode:
                 log = runtime / "bridge.log"
                 self.fail(f"Bridge startup failed: {started.stdout}\n{started.stderr}\n" + (log.read_text(encoding="utf-8", errors="replace")[-8000:] if log.exists() else "No bridge log."))
             self.assertTrue(json.loads(started.stdout)["ok"])
             try:
                 first = read_info(runtime)
+                time.sleep(6)  # beyond the bridge's five-second owner check
+                self.assertTrue(request(runtime, {"action": "ping"})["ok"])
                 self.assertTrue(json.loads(subprocess.check_output(command, encoding="utf-8"))["ok"])
                 self.assertEqual(first["pid"], read_info(runtime)["pid"])
                 url = f'http://127.0.0.1:{first["port"]}/rpc'
@@ -55,6 +60,21 @@ class BridgeTests(unittest.TestCase):
                 run = request(runtime, {"action": "run", "path": view["path"], "revision": view["revision"], "id": ident})
                 self.assertTrue(run["ok"], run)
                 self.assertEqual(run["result"]["cells"][1]["status"], "ok")
+                # The chat fallback is a CLI client of this exact live kernel,
+                # not another interpreter. It retains x from the preceding run.
+                cli = [sys.executable, str(Path(__file__).with_name("bridge.py")), "request", "--runtime", str(runtime)]
+                def cli_request(payload):
+                    reply = subprocess.run(cli, input=json.dumps(payload), capture_output=True, encoding="utf-8", timeout=45)
+                    self.assertEqual(reply.returncode, 0, reply.stderr)
+                    return json.loads(reply.stdout)
+                edited = cli_request({"action": "update", "revision": view["revision"], "id": ident, "source": "print(x + 1)\nx += 10"})
+                self.assertTrue(edited["ok"], edited)
+                executed = cli_request({"action": "run", "revision": edited["result"]["revision"], "id": ident})
+                self.assertTrue(executed["ok"], executed)
+                self.assertEqual(executed["result"]["kernel"]["id"], run["result"]["kernel"]["id"])
+                self.assertIn("42", json.dumps(executed["result"]["cells"][1]["run"]["outputs"]))
+                self.assertFalse(cli_request({"action": "update", "revision": view["revision"], "id": ident, "source": "wrong revision"})["ok"])
+                view = executed["result"]
                 self.assertFalse(request(runtime, {"action": "new", "path": "../escape.nb.md"})["ok"])
                 # Shutdown must work while a long cell owns the service lock.
                 view = request(runtime, {"action": "update", "path": view["path"], "revision": view["revision"], "id": ident, "source": "import time\ntime.sleep(30)"})["result"]

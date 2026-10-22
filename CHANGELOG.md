@@ -6,6 +6,9 @@
 - Download verified official Typst binaries when missing and prepare MiTeX before rendering equations. Show progress, diagnostics, and a retryable warning if optional rendering setup fails.
 - Add `/lab setup` and `/lab setup repair`. Reuse dependencies across plugin updates, serialize concurrent installers, and keep existing environments intact during replacement.
 - Preserve custom Python selection and add `/lab python auto`. The source launcher now uses automatic setup unless a custom interpreter was explicitly configured.
+- Replace paged editing with a focused, scrolling full-cell input that adapts to terminal size and preserves long lines, blank lines, and multiline paste.
+- Add `/lab tools` diagnostics and a same-kernel CLI fallback when Claude Code's native tool connection fails. Supply the exact connection with chat context and refresh the pane after bridge calls.
+- Keep the notebook kernel alive when a short-lived host process launcher exits; normal session shutdown and the idle timeout still clean it up.
 
 ## 0.2.5
 

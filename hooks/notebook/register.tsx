@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On, ElementTable, RenderSurface, RenderElement } from 'claude-code'
-import { actions, cleanText, commandOf, compactView, initialLab, notebookContext, outputText, parseGenerated, PANE, TOOL, type LabState, type NotebookView } from './model'
-import { EDIT_LINES, editPage, replacePage } from './editor'
+import { actions, bridgeContext, cleanText, commandOf, compactView, initialLab, notebookContext, outputText, parseGenerated, PANE, TOOL, type LabState, type NotebookView } from './model'
+import { editorRows } from './editor'
 import { plotSource, fitPlot, clearImageCache } from './images'
 import { graphicsReport, notebookGraphics } from './graphics'
 import { diagram, inlineMath, mathText, raster, imageUri, type Pixels } from './rich'
@@ -17,6 +17,7 @@ let choice: RuntimeChoice | null = null
 let settingUp: Promise<RuntimeChoice> | null = null
 let booting: Promise<void> | null = null
 let closing = false
+let reconnected = false
 let imagesSupported = false
 let sendBytes = false
 let graphics = notebookGraphics({})
@@ -274,25 +275,41 @@ async function beginEdit($: EngineInterface, id: string) {
     if (s.busy || s.draft !== null) return { ...s, error: 'Finish the current operation or edit first.' }
     const cell = s.view?.cells.find(c => c.id === id)
     if (!cell) return { ...s, error: 'Choose a cell first.' }
-    const page = editPage(cell.source)
-    return { ...s, selected: id, draft: cell.source, draftRevision: s.view!.revision, draftStart: page.start, draftEnd: page.end, editEpoch: (s.editEpoch || 0) + 1, error: null }
+    return { ...s, selected: id, draft: cell.source, draftRevision: s.view!.revision, editEpoch: (s.editEpoch || 0) + 1, error: null }
   })
-}
-
-async function moveEditPage($: EngineInterface, forward: boolean) {
-  await update($, lab, s => {
-    if (s.draft === null) return s
-    const page = editPage(s.draft, forward ? s.draftEnd : Math.max(0, s.draftStart - EDIT_LINES))
-    return { ...s, draftStart: page.start, draftEnd: page.end, editEpoch: s.editEpoch + 1 }
-  })
+  const current = await read($, lab)
+  if (current.draft !== null && current.selected === id) {
+    await openPane($)
+    const focused = await $.ui.focus({ requestId: PANE, key: `edit-${id}-${current.editEpoch}` }).catch(() => ({ deny: 'Focus API unavailable' }))
+    if (focused.deny && !focused.deny.includes('focus moved meanwhile')) await update($, lab, s => ({ ...s, error: 'Click inside the source field to give it the keyboard.' }))
+  }
 }
 
 async function openPane($: EngineInterface) {
   await $.ui.open({ id: PANE, title: 'Lab notebook', focus: true, rows: 40, columns: 90 })
 }
 
+async function registerTool($: EngineInterface) {
+  await $.tool.register({ name: 'notebook', isDeferred: false,
+    description: 'Read, edit and run the active Lab .nb.md notebook in its persistent Python kernel. Use status to get cell IDs, sources, saved outputs and revision; update changes source, run executes Python, vars inspects live variables. Supply the current revision for mutations. Omit path to use the notebook open in /lab. AI instructions are cells; generated Python never runs automatically. NotebookEdit is a separate built-in tool for .ipynb files, not this notebook. Outputs are bounded text and image paths; read image paths when visual inspection is needed.',
+    inputSchema: { type: 'object', properties: { action: { type: 'string', enum: [...actions] }, path: { type: 'string' }, revision: { type: 'string' }, id: { type: 'string' }, type: { type: 'string', enum: ['markdown', 'python', 'ai'] }, source: { type: 'string' }, direction: { type: 'string', enum: ['up', 'down'] }, destination: { type: 'string' }, format: { type: 'string', enum: ['ipynb', 'markdown'] }, timeout: { type: 'number', minimum: 1, maximum: 300 } }, required: ['action'], additionalProperties: false },
+  })
+}
+
+async function toolReady($: EngineInterface, retry = false) {
+  if ((await $.tool.list()).some(t => t.name === TOOL)) return true
+  // Registration can resolve before the host's loopback MCP connection succeeds.
+  // Re-register once to reconnect; never equate registration with visibility.
+  if (retry || !reconnected) {
+    reconnected = true
+    await registerTool($)
+  }
+  return (await $.tool.list()).some(t => t.name === TOOL)
+}
+
 export async function startNotebook($: EngineInterface) {
     closing = false
+    reconnected = false
     probeCount = 0
     probing = probed = false
     displayed.clear()
@@ -308,11 +325,8 @@ export async function startNotebook($: EngineInterface) {
     })
     sendBytes = graphics.bytes
     imagesSupported = graphics.native
-    await $.tool.register({ name: 'notebook', isDeferred: false,
-      description: 'Read, edit and run the local Lab notebook. Three cell types: markdown, python, ai. Use status to read the current revision; supply that revision for editing/running. Python shares a persistent kernel. Editing NEVER executes. run_all restarts the kernel and executes saved Python in order, stopping on error; it does not regenerate AI. Outputs are bounded text and image file paths, not base64. Read image paths with Read when visual inspection is needed.',
-      inputSchema: { type: 'object', properties: { action: { type: 'string', enum: [...actions] }, path: { type: 'string' }, revision: { type: 'string' }, id: { type: 'string' }, type: { type: 'string', enum: ['markdown', 'python', 'ai'] }, source: { type: 'string' }, direction: { type: 'string', enum: ['up', 'down'] }, destination: { type: 'string' }, format: { type: 'string', enum: ['ipynb', 'markdown'] }, timeout: { type: 'number', minimum: 1, maximum: 300 } }, required: ['action'], additionalProperties: false },
-    })
-    await $.command.register({ name: 'lab', description: 'Python lab notebook: Markdown, Python and AI cells', argumentHint: '[demo|new|open|edit|run|generate|vars|restart|interrupt|export|setup|doctor|graphics]', immediate: true })
+    await registerTool($)
+    await $.command.register({ name: 'lab', description: 'Python lab notebook: Markdown, Python and AI cells', argumentHint: '[demo|new|open|edit|run|generate|vars|restart|interrupt|export|setup|doctor|tools|graphics]', immediate: true })
 }
 
 export async function stopNotebook($: EngineInterface, reason: string) {
@@ -336,10 +350,41 @@ export function registerNotebook(on: On) {
   on('prompt.submit', async ($, e, next) => {
     if (e.command || e.isMeta) return next(e)
     let context: string | null = null
-    try { context = notebookContext(await read($, lab)) }
+    try {
+      context = notebookContext(await read($, lab))
+      if (context) {
+        const connected = await toolReady($).catch(() => false)
+        const state = await read($, lab)
+        let fallback = 'Finish the open cell edit or current notebook operation before making changes from chat.'
+        if (!connected && state.view && state.draft === null && !state.busy) {
+          await ensureBridge($)
+          fallback = bridgeContext(python, $.plugin.root, runtime!, state.view.path)
+        }
+        context = `Notebook tool: ${TOOL}. Connection: ${connected ? 'available in this session; use action status, then update/run with the returned IDs and revision' : fallback}.\n${context}`
+      }
+    }
     catch { /* Notebook context must never prevent an ordinary chat prompt. */ }
     return next(context ? { ...e, context: [...(e.context ?? []), context] } : e)
   })
+
+  // Shell fallback results belong to the same bridge. Refresh only after those
+  // calls; do not poll, execute Python, or replace an in-progress editor draft.
+  on('classic.PostToolUse', async ($, e, next) => {
+    const result = await next(e)
+    const input = JSON.stringify(e.tool_input ?? {})
+    if (runtime && input.includes('bridge.py') && ['Bash', 'PowerShell', 'powershell'].includes(e.tool_name)) {
+      const state = await read($, lab)
+      if (state.view && state.draft === null && !state.busy) {
+        try {
+          const view = await invoke($, 'request', { action: 'status', path: state.view.path })
+          if (Array.isArray(view.cells)) await setView($, view as unknown as NotebookView)
+        } catch { /* A failed or stopped bridge must not hide the shell result. */ }
+      }
+    }
+    return result
+  })
+
+  on('tool.describe', { tool: TOOL }, async ($, e, next) => ({ ...await next(e), isDeferred: false }))
 
   // Each transcript row uses its recorded result, never the current notebook.
   on('ui.render', { component: 'ToolResult', props: { tool: TOOL } }, async ($, e, next) => {
@@ -393,6 +438,19 @@ export function registerNotebook(on: On) {
       const { action, value } = commandOf(e.args)
       const s = await read($, lab)
       const id = value && /^\d+$/.test(value) ? s.view?.cells[Number(value) - 1]?.id : value || s.selected
+      if (action === 'tools') {
+        const connected = await toolReady($, true)
+        if (!connected) {
+          if (!s.view) return { text: `Notebook tool ${TOOL} is not available. Open /lab demo or /lab open <path> to enable the same-kernel CLI fallback for chat. /reload-plugins or restart Claude Code retries the native tool connection.` }
+          await ensureBridge($)
+          await invoke($, 'request', { action: 'status', path: s.view.path })
+          return { text: `Claude's native notebook tool connection failed, but the notebook CLI bridge is ready and its status check succeeded. Your next chat message includes instructions for Claude to edit and run cells in this same kernel. Use /reload-plugins or restart Claude Code to retry the native tool.` }
+        }
+        if (!s.view) return { text: `Connected: ${TOOL}. Open /lab demo or /lab open <path>, then ask Claude to read status, update a cell and run it.` }
+        const check = await $.tool.call({ tool: TOOL, action: 'status', path: s.view.path } as never)
+        if ('deny' in check || ('isError' in check && check.isError)) return { text: `Tool is listed, but the notebook read failed: ${JSON.stringify(check)}` }
+        return { text: `Connected: ${TOOL}. Read-only status call succeeded for ${s.view.path}. Claude can read sources and outputs and request edits or execution through this tool.` }
+      }
       if (action === 'setup') {
         if (s.busy || settingUp || s.draft !== null) throw new Error('Finish the current operation or edit before setup.')
         if (value && value !== 'repair') throw new Error('Use /lab setup, or /lab setup repair to rebuild the environment.')
@@ -458,7 +516,7 @@ export function registerNotebook(on: On) {
         await perform($, 'export', { format: destination.action, destination: destination.value || undefined })
       }
       else if (action === 'import') await perform($, 'import', { source: value, path: undefined })
-      else return { text: 'Use /lab [demo|new <path>|open <path>|add markdown/python/ai|select N|edit N|run N|generate N|all|vars|restart|interrupt|refresh|export ipynb/markdown|import <ipynb>|python <path>|setup [repair]|doctor|graphics].' }
+      else return { text: 'Use /lab [demo|new <path>|open <path>|add markdown/python/ai|select N|edit N|run N|generate N|all|vars|restart|interrupt|refresh|export ipynb/markdown|import <ipynb>|python <path>|setup [repair]|doctor|tools|graphics].' }
       if (action !== 'interrupt') await openPane($)
       return { text: (await read($, lab)).notice || `Notebook: ${action} complete.` }
     } catch (error) {
@@ -476,18 +534,30 @@ export function registerNotebook(on: On) {
     await read($, done)
     const v = s.view
     const current = v?.cells.find(c => c.id === s.selected)
-    const editorText = s.draft?.split('\n').slice(s.draftStart, s.draftEnd).join('\n') ?? ''
     const editorLines = s.draft?.split('\n').length ?? 0
     const editorKey = current ? `edit-${current.id}-${s.editEpoch}` : ''
-    const changePage = async (text: string) => {
-      await update($, lab, x => x.draft === null || x.editEpoch !== s.editEpoch ? x : { ...x, ...replacePage(x.draft, x.draftStart, x.draftEnd, text) })
+    const changeDraft = async (text: string) => {
+      await update($, lab, x => x.draft === null || x.editEpoch !== s.editEpoch ? x : { ...x, draft: text.replace(/\r\n/g, '\n') })
     }
     const saveEdit = async (text?: string) => {
-      if (text !== undefined) await changePage(text)
+      if (text !== undefined) await changeDraft(text)
       const latest = await read($, lab)
       if (latest.draft !== null && latest.editEpoch === s.editEpoch && current) await act($, 'update', { id: current.id, source: latest.draft, revision: latest.draftRevision })
     }
     const width = Math.max(12, e.props.bodyColumns || e.viewport?.columns || 80)
+    if (s.draft !== null && current && v) {
+      const rows = editorRows(e.props.scroll?.bodyRows || (e.viewport?.rows ?? 24) - 5, width)
+      return <Box flexDirection="column" width={Math.max(1, e.props.bodyColumns || width)}>
+        <Text bold>{`Edit ${v.cells.indexOf(current) + 1} · ${current.type}`}</Text>
+        <Input key={editorKey} rows={rows} value={s.draft} placeholder="Type cell content here" submitLabel="save" autoFocus onInput={changeDraft} onSubmit={saveEdit} />
+        <Box gap={1} flexWrap="wrap">
+          <Button key="lab-save-edit" label="Save" onPress={() => saveEdit()} />
+          <Button key="lab-cancel-edit" label="Cancel" onPress={() => void update($, lab, x => ({ ...x, draft: null, draftRevision: null, error: null }))} />
+        </Box>
+        {width >= 30 ? <Text dimColor>{`${editorLines} lines · arrows scroll · Enter saves`}</Text> : null}
+        {s.error ? <Text color="red">{cleanText(s.error)}</Text> : null}
+      </Box>
+    }
     const light = await lightTheme($)
     const markdown = current?.type === 'markdown' ? await richContent($, elements, e.surface, current.rich ?? [{ kind: 'markdown', text: current.source }], width - 4, current.id, light) : null
     const plots = []
@@ -515,17 +585,7 @@ export function registerNotebook(on: On) {
           <Text bold color={current.status === 'stale' ? 'warning' : 'permission'}>{`CELL ${v.cells.indexOf(current) + 1} · ${current.type.toUpperCase()} · ${current.status}${current.run ? ` · ${current.run.duration_ms} ms` : ''}`}</Text>
           {current.generated_from ? <Text dimColor>Generated from an AI instruction · editable and saved</Text> : null}
           {current.status === 'stale' ? <Text color="yellow">Inputs or earlier execution changed. Review and rerun or regenerate.</Text> : null}
-          {s.draft !== null ? <Box flexDirection="column">
-            <Text dimColor>{`Source · lines ${s.draftStart + 1}–${s.draftEnd} of ${editorLines} · Enter saves the whole cell`}</Text>
-            {current.type === 'markdown' ? <Text dimColor>Markdown text and $inline math$; use $$ on separate lines for a display equation.</Text> : null}
-            <Input key={editorKey} rows={12} label="Source" value={editorText} placeholder="This part of the cell is empty. Type here." submitLabel="save cell" autoFocus onInput={changePage} onSubmit={saveEdit} />
-            <Box gap={1} flexWrap="wrap">
-              {s.draftStart > 0 ? <Button key="lab-edit-previous" label="Previous lines" onPress={() => moveEditPage($, false)} /> : null}
-              {s.draftEnd < editorLines ? <Button key="lab-edit-next" label="Next lines" onPress={() => moveEditPage($, true)} /> : null}
-              <Button key="lab-save-edit" label="Save cell" onPress={() => saveEdit()} />
-            <Button key="lab-cancel-edit" label="Cancel edit" onPress={() => void update($, lab, x => ({ ...x, draft: null, draftRevision: null, error: null }))} />
-            </Box>
-          </Box> : <Box flexDirection="column">
+          <Box flexDirection="column">
             {current.type === 'markdown' ? markdown : <Code source={cleanText(current.type === 'python' && current.run && !s.showCode ? current.source.split('\n').slice(0, 3).join('\n') : current.source).slice(0, 20000)} language={current.type === 'python' ? 'python' : 'text'} />}
             {current.type === 'python' && current.run && current.source.split('\n').length > 3 ? <Button key="lab-code-toggle" label={s.showCode ? 'Collapse code' : `Show full code (${current.source.split('\n').length} lines)`} onPress={() => void update($, lab, x => ({ ...x, showCode: !x.showCode }))} /> : null}
             <Box gap={1} flexWrap="wrap" marginY={1}>
@@ -536,7 +596,7 @@ export function registerNotebook(on: On) {
               <Button key="lab-down" label="Move down" onPress={() => act($, 'move', { id: current.id, direction: 'down' })} />
               <Button key="lab-delete" label="Delete cell" onPress={() => { void $.ui.ask('Delete this cell from the notebook?', ['Cancel', 'Delete cell']).then(answer => { if (answer === 'Delete cell') act($, 'remove', { id: current.id }) }).catch(() => undefined) }} />
             </Box>
-          </Box>}
+          </Box>
           {current.run ? <Box flexDirection="column">
             <Text dimColor>OUTPUT {current.status === 'saved' ? '· from an earlier kernel' : ''}</Text>
             {await outputContent($, elements, e.surface, current.run.outputs, width - 4, current.id, light)}

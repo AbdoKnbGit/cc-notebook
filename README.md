@@ -64,7 +64,7 @@ For a checkout started with `scripts/start_lab.py`, use `git pull --ff-only` and
 
 ## Ask Claude to work on cells
 
-Open a notebook, then ask: “Use the notebook tool to edit cell 3, run it, and explain the result.” Claude can read source, edit cells, execute Python, inspect variables and retrieve results. After a manual button run, your next chat message carries a small snapshot of the selected cell and latest result. The tool supplies full details; clicking Run does not make a model request. AI-cell Generate is a separate completion using the session's model and authentication.
+Open a notebook, then ask: “Change cell 3 to use tau=4, run it, and explain the result.” Claude can read source, edit cells, execute Python, inspect variables and retrieve results. `/lab tools` checks the connection. If Claude's native tool transport fails, the next chat prompt supplies a CLI fallback to the same live kernel, using Claude's normal shell permissions. After a manual button run, your next chat message carries a small snapshot of the selected cell and latest result. Clicking Run does not make a model request. AI-cell Generate is a separate completion using the session's model and authentication.
 
 ## Open it in Jupyter
 

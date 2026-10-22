@@ -38,12 +38,13 @@ To enable the notebook for ordinary `claude` launches **in this project**, run `
 | `/lab` | Open the notebook pane, restoring the last path if available |
 | `/lab demo` | Create or reopen the visual lab, preserving edits |
 | `/lab doctor`, `/lab graphics` | Check Python dependencies and explain the current terminal image mode |
+| `/lab tools` | Check Claude's notebook tool and the same-kernel CLI fallback |
 | `/lab setup`, `/lab setup repair` | Prepare automatic dependencies, retry downloads, or rebuild a damaged managed environment |
 | `/lab python auto`, `/lab python <path>` | Select automatic setup or an existing environment you manage yourself |
 | `/lab new notebooks/name.nb.md` | Create a notebook without overwriting an existing file |
 | `/lab open <path>` | Open a saved notebook; switching notebooks stops the previous kernel |
 | `/lab select N`, `/lab run N` | Select or execute a Python cell by number |
-| `/lab edit N` | Edit from the first source lines; Previous/Next lines navigate without saving |
+| `/lab edit N` | Focus the complete source in a scrolling multiline editor |
 | `/lab add markdown`, `python`, or `ai` | Add an empty cell |
 | `/lab generate N` | Generate up to eight editable Markdown/Python cells from an AI instruction |
 | `/lab all` | Restart, then run saved Python in order; stop at the first failure |
@@ -53,11 +54,13 @@ To enable the notebook for ordinary `claude` launches **in this project**, run `
 | `/lab export markdown [path]` | Export a local report with links to cached plots |
 | `/lab import <file.ipynb>` | Import sources into a new `.nb.md`; old execution outputs are not imported |
 
-The pane has cell editing, reordering, deletion, execution, generation, and variable controls. The editor initially shows eight source lines, with the line range and Previous/Next controls. Enter or Save cell saves the whole draft, including changes on other pages; Cancel discards the draft. Editing and page navigation never execute code. Save/cancel a draft before changing cells. A disk conflict keeps the draft. Cancel or copy the draft before refreshing. Notebook source and export paths must remain inside the current workspace.
+The pane has cell editing, reordering, deletion, execution, generation, and variable controls. `/lab edit N` focuses the full cell source in a scrolling multiline field. Type normally; use the terminal's newline shortcut (shown beside the field, usually Shift+Enter or backslash then Enter). Enter or Save saves the whole draft; Cancel discards it. The viewport adapts when the terminal resizes; there is no page or screen-length limit on editing. The existing safety limits remain one million characters per cell and four million per notebook. Editing never executes code. Save/cancel a draft before changing cells. A disk conflict keeps the draft. Cancel or copy the draft before refreshing. Notebook source and export paths must remain inside the current workspace.
 
 Claude can use the registered `notebook` tool to read, edit, and run cells. Mutating tool calls honor the session permission verdict. Python runs with the permissions of the selected local interpreter, as ordinary Jupyter does; it is not a sandbox. Cells can access the local filesystem and network when explicitly run.
 
-With a notebook open, ask Claude: “Use the notebook tool to change cell 3 to plot tau=4, run it, and explain its output.” Claude reads `status` for cell IDs and the current revision, makes the edit, executes the cell, and receives its results. A button run also becomes visible in a small snapshot attached to your next ordinary chat message: active path, selected cell, latest execution status and bounded text output. Full source, outputs, variables and image paths are available through the tool. This does not send a message or make a model request when you click Run. It appends context beside the next prompt without rewriting the system prompt or earlier conversation; image bytes and unsaved draft contents are excluded. Claude should refresh status before acting, since the snapshot can become stale while an operation is running or a file changes externally.
+With a notebook open, ask Claude: “Change cell 3 to plot tau=4, run it, and explain its output.” Claude reads `status` for cell IDs and the current revision, makes the edit, executes the cell, and receives its results. `/lab tools` checks the connection. If Claude Code's native tool transport fails, the next prompt supplies the exact CLI bridge connection to the same live kernel. Claude can use it through its normal shell tool and permission checks; source changes and runs still use the notebook's revision checks and saved outputs. The pane refreshes after bridge shell calls. No separate Python execution or direct `.nb.md` editing is needed. Save/cancel an open editor draft before asking chat to change it.
+
+A button run also becomes visible in a small snapshot attached to your next ordinary chat message: active path, selected cell, latest execution status and bounded text output. Full source, outputs, variables and image paths are available through the tool or bridge. This does not send a message or make a model request when you click Run. It appends context beside the next prompt without rewriting the system prompt or earlier conversation; image bytes and unsaved draft contents are excluded. Claude should refresh status before acting, since the snapshot can become stale while an operation is running or a file changes externally.
 
 ## File format and Jupyter
 
