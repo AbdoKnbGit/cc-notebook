@@ -131,7 +131,9 @@ async function richContent($: EngineInterface, elements: ElementTable, surface: 
       parts.push(<Box key={id} flexDirection="column" marginY={1}>{art ? <Text>{art.split(/([─│┌┐└┘┬┴┼├┤╭╮╰╯►◄▲▼▶◀]+)/).map((span, n) => <Text key={`${id}-span-${n}`} color={n % 2 ? 'permission' : 'text'}>{span}</Text>)}</Text> : <Box flexDirection="column"><Text dimColor>Diagram source · unsupported syntax or too wide for this pane</Text><Code source={block.text} language="mermaid" /></Box>}</Box>)
     } else if (block.kind === 'math') {
       const asset = light ? block.light : block.dark
-      if (asset && (surface !== 'terminal' || imagesSupported)) parts.push(await picture($, elements, surface, asset, width, id, light, mathText(block.text), site))
+      // Keep standalone typeset equations readable without scaling them to fill
+      // the whole notebook pane like plots and photographs.
+      if (asset && (surface !== 'terminal' || imagesSupported)) parts.push(await picture($, elements, surface, asset, Math.min(width, 28), id, light, mathText(block.text), site))
       else {
         const text = mathText(block.text)
         const complex = /\\[A-Za-z]/.test(text) || text.split('\n').length > 4 || text.length > 240

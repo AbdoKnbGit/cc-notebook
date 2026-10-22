@@ -130,7 +130,7 @@ Math uses Unicode notation when native images are unavailable. Typeset display e
 
 When inline native math is unavailable, **Open typeset equation** links to the generated full-resolution PNG beside the readable text. A successful equation compile confirms the typesetter works; it does not mean the terminal can display native pixels.
 
-There is no separate LaTeX cell type. Write ordinary Markdown and math in the same **Markdown** cell. Inline `$...$` uses readable Unicode notation; display `$$...$$` becomes a typeset image where native graphics are available. For example, paste this into the cell editor (without an outer code fence):
+There is no separate LaTeX cell type. Write ordinary Markdown and math in the same **Markdown** cell. Inline `$...$` uses readable Unicode notation; display `$$...$$` becomes a standalone typeset image where native graphics are available. Display equations are capped at 28 terminal columns so they remain readable without stretching across a wide pane. For example, paste this into the cell editor (without an outer code fence):
 
 ```markdown
 # Decay experiment

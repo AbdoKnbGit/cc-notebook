@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.12
+
+- Keep standalone LaTeX display equations compact in wide terminal panes.
+
 ## 0.2.8
 
 - Move per-notebook cross-session locks into the same private local runtime directory as bridge startup locks. This avoids mounted or network-backed project filesystems reporting false notebook-busy conflicts.

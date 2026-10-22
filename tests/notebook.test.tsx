@@ -468,6 +468,7 @@ test('supported terminal uses the light equation preview when the host theme is 
   const ui = await mount($)
   const image: any = await ui.find({ type: 'Image' })
   expect(image?.props.source.file).toBe('/work/light-preview.png')
+  expect(image?.props.columns).toBeLessThanOrEqual(28)
   await ui.unmount()
 })
 
