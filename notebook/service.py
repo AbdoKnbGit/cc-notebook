@@ -123,7 +123,13 @@ class Service:
             if action == "new":
                 name = name or "notebooks/untitled.nb.md"
             if action == "import":
-                name = name or str(self.docs.path(request["source"]).with_suffix(".nb.md"))
+                source_name = request.get("source")
+                if not isinstance(source_name, str) or not source_name.strip():
+                    raise ValueError("Import needs source: the path to an existing .ipynb file.")
+                source_path = self.docs.path(source_name)
+                if not source_path.is_file():
+                    raise ValueError(f"Import source not found: {source_path}")
+                name = name or str(source_path.with_suffix(".nb.md"))
             if name:
                 path = self.docs.path(name)
                 # Bridge sessions share this per-workspace lock directory, but
@@ -193,6 +199,8 @@ class Service:
             self.docs.save(path, doc, create=True)
         if not name:
             raise ValueError("Open or create a notebook first: /lab new notebooks/analysis.nb.md")
+        if action == "export" and not self.docs.path(name).is_file():
+            raise ValueError("Export source notebook not found. Use path for the existing .nb.md notebook and destination for the new .ipynb or .md file.")
         path, doc, revision = self.docs.load(name)
         if self.active and self.active != str(path):
             if action not in ("open", "new", "import", "demo"):

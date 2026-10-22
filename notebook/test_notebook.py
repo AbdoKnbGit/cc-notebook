@@ -179,6 +179,18 @@ class KernelIntegrationTests(unittest.TestCase):
 
 
 class JupyterImportTests(unittest.TestCase):
+    def test_import_and_export_report_actionable_path_errors(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            service = Service(root, root / ".runtime")
+            with self.assertRaisesRegex(ValueError, r"Import needs source.*existing \.ipynb"):
+                service.handle({"action": "import"})
+            with self.assertRaisesRegex(ValueError, "Import source not found"):
+                service.handle({"action": "import", "source": "missing.ipynb"})
+            with self.assertRaisesRegex(ValueError, "Export source notebook not found.*destination"):
+                service.handle({"action": "export", "path": "missing.nb.md", "destination": "result.ipynb"})
+            service.kernel.stop()
+
     def test_export_import_preserves_cell_types_and_sources_without_execution(self):
         import nbformat
         with tempfile.TemporaryDirectory() as directory:

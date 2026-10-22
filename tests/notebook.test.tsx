@@ -194,9 +194,11 @@ test('notebook tool returns bounded text results and draws inline plots on suppo
   await ($ as any).session.start({ source: 'startup', cwd: '/work' })
   const reply = await $.tool.call({ tool: TOOL, action: 'open', path: '/work/notebook.nb.md' } as never)
   expect(JSON.stringify(reply)).not.toContain('image/png')
+  expect(typeof reply.result).toBe('string')
+  expect(JSON.parse(reply.result as string).cells[1].run.images).toContain(file)
   expect(w.calls[0].action).toBe('open')
   for (const surface of ['terminal', 'desktop', 'vscode'] as const) {
-    const ui = await $.ui.mount({ plugin: 'cc-notebook', surface, component: 'ToolResult', requestId: 'notebook-output', props: { tool_use_id: 'notebook-output', tool: TOOL, output: JSON.stringify(w.view), isErrored: false }, viewport: { columns: 100, rows: 40 } } as any)
+    const ui = await $.ui.mount({ plugin: 'cc-notebook', surface, component: 'ToolResult', requestId: 'notebook-output', props: { tool_use_id: 'notebook-output', tool: TOOL, output: JSON.stringify(reply), isErrored: false }, viewport: { columns: 100, rows: 40 } } as any)
     if (surface === 'terminal') {
       const shown: any = await ui.find({ type: 'Image' })
       expect(shown?.props.source.file).toBe(file)

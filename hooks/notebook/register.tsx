@@ -291,8 +291,8 @@ async function openPane($: EngineInterface) {
 
 async function registerTool($: EngineInterface) {
   await $.tool.register({ name: 'notebook', isDeferred: false,
-    description: 'Read, edit and run the active Lab .nb.md notebook in its persistent Python kernel. Use status to get cell IDs, sources, saved outputs and revision; update changes source, run executes Python, vars inspects live variables. Supply the current revision for mutations. Omit path to use the notebook open in /lab. AI instructions are cells; generated Python never runs automatically. NotebookEdit is a separate built-in tool for .ipynb files, not this notebook. Outputs are bounded text and image paths; read image paths when visual inspection is needed.',
-    inputSchema: { type: 'object', properties: { action: { type: 'string', enum: [...actions] }, path: { type: 'string' }, revision: { type: 'string' }, id: { type: 'string' }, type: { type: 'string', enum: ['markdown', 'python', 'ai'] }, source: { type: 'string' }, direction: { type: 'string', enum: ['up', 'down'] }, destination: { type: 'string' }, format: { type: 'string', enum: ['ipynb', 'markdown'] }, timeout: { type: 'number', minimum: 1, maximum: 300 } }, required: ['action'], additionalProperties: false },
+    description: 'Read, edit and run the active Lab .nb.md notebook in its persistent Python kernel. Use status to get cell IDs, sources, saved outputs and revision; update changes source, run executes Python, vars inspects live variables. Supply the current revision for mutations. Omit path to use the notebook open in /lab. For export, path selects the existing source notebook and destination is the new .ipynb or .md output path. For import, source is the existing .ipynb file and path optionally names the new .nb.md notebook. AI instructions are cells; generated Python never runs automatically. NotebookEdit is a separate built-in tool for .ipynb files, not this notebook. Outputs are bounded text and image paths; read image paths when visual inspection is needed.',
+    inputSchema: { type: 'object', properties: { action: { type: 'string', enum: [...actions] }, path: { type: 'string', description: 'Existing source .nb.md path for export, target notebook path for open/new, or optional output .nb.md path for import. Omit to use the active notebook.' }, revision: { type: 'string', description: 'Current revision returned by status; required for notebook mutations.' }, id: { type: 'string', description: 'Cell ID returned by status.' }, type: { type: 'string', enum: ['markdown', 'python', 'ai'], description: 'Cell type for add.' }, source: { type: 'string', description: 'Cell contents for add/update; for import, the existing .ipynb input file path.' }, direction: { type: 'string', enum: ['up', 'down'] }, destination: { type: 'string', description: 'New output path for export. This is not the source notebook path.' }, format: { type: 'string', enum: ['ipynb', 'markdown'] }, timeout: { type: 'number', minimum: 1, maximum: 300 } }, required: ['action'], additionalProperties: false },
   })
 }
 
@@ -394,7 +394,10 @@ export function registerNotebook(on: On) {
     let output: unknown = e.props.output
     try {
       if (typeof output === 'string') output = JSON.parse(output)
-      if (output && typeof output === 'object' && 'result' in output) output = (output as { result: unknown }).result
+      if (output && typeof output === 'object' && 'result' in output) {
+        output = (output as { result: unknown }).result
+        if (typeof output === 'string') output = JSON.parse(output)
+      }
       if (output && typeof output === 'object' && 'content' in output) output = JSON.parse((output as { content: { text?: string }[] }).content.map(c => c.text ?? '').join('\n'))
     } catch { return next(e) }
     const result = output as NotebookView | null
@@ -429,7 +432,10 @@ export function registerNotebook(on: On) {
         }
       }
       const result = await perform($, action, args)
-      return { result: Array.isArray(result.cells) ? compactView(result as unknown as NotebookView) : result }
+      const payload = Array.isArray(result.cells) ? compactView(result as unknown as NotebookView) : result
+      // Claude Code validates tool replies as text content. Returning an object
+      // here let the operation succeed but made the host reject the response.
+      return { result: typeof payload === 'string' ? payload : JSON.stringify(payload) }
     } catch (error) { return { isError: true, result: messageOf(error) } }
   })
 
