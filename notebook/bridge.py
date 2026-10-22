@@ -11,8 +11,10 @@ import hmac
 import json
 import os
 import secrets
+import stat
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import urllib.error
@@ -20,7 +22,6 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from socketserver import TCPServer
-from storage import safe_cache
 
 
 def emit(data):
@@ -28,7 +29,45 @@ def emit(data):
 
 
 def runtime_dir(workspace, session):
-    return safe_cache(Path(workspace), "runtime", hashlib.sha256(session.encode()).hexdigest()[:24])
+    """Keep bridge locks and sockets' registry on local per-user storage.
+
+    Project workspaces can live on NFS, SMB, or Windows-mounted filesystems
+    where POSIX advisory locks are unavailable or behave differently. The
+    short-lived bridge runtime does not belong in the project cache.
+    """
+    user = str(os.getuid()) if hasattr(os, "getuid") else os.environ.get("USERNAME", "user")
+    user_key = hashlib.sha256(user.encode("utf-8", errors="replace")).hexdigest()[:12]
+
+    base = None
+    xdg = os.environ.get("XDG_RUNTIME_DIR")
+    if xdg and os.name != "nt" and Path(xdg).is_absolute():
+        candidate = Path(xdg)
+        try:
+            info = candidate.stat()
+            if (candidate.is_dir() and not candidate.is_symlink()
+                    and (not hasattr(os, "getuid") or info.st_uid == os.getuid())
+                    and stat.S_IMODE(info.st_mode) & 0o077 == 0):
+                base = candidate / "cc-notebook"
+        except OSError:
+            pass
+    if base is None:
+        # The default temporary directory is local on supported hosts. Scope
+        # the folder by user because /tmp itself is shared on Unix systems.
+        base = Path(tempfile.gettempdir()) / f"cc-notebook-{user_key}"
+
+    try:
+        base.mkdir(mode=0o700, parents=False, exist_ok=True)
+        info = base.lstat()
+        if (stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode)
+                or (hasattr(os, "getuid") and info.st_uid != os.getuid())):
+            raise ValueError("Notebook runtime directory must be a private directory owned by this user.")
+        if os.name != "nt":
+            base.chmod(0o700)
+    except OSError as error:
+        raise ValueError(f"Cannot create the private notebook runtime directory: {error}") from error
+
+    identity = hashlib.sha256((str(Path(workspace).resolve()) + "\0" + session).encode("utf-8", errors="replace")).hexdigest()[:24]
+    return base / identity
 
 
 def read_info(runtime):
@@ -198,7 +237,7 @@ def start(workspace, runtime, host_pid=0):
             proc = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=log, stderr=log, cwd=workspace, **kwargs)
         for _ in range(150):
             if proc.poll() is not None:
-                raise RuntimeError("Notebook bridge could not start. Check .claude-notebook/runtime/*/bridge.log and install notebook/requirements.txt in the selected Python environment.")
+                raise RuntimeError(f"Notebook bridge could not start. Check {runtime / 'bridge.log'} and install notebook/requirements.txt in the selected Python environment.")
             try:
                 if read_info(runtime).get("owner") == owner and request(runtime, {"action": "ping"}, timeout=1).get("ok"):
                     return {"runtime": str(runtime)}

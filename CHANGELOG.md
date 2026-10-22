@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.7
+
+- Keep the bridge lock and session registry in a private per-user local runtime directory instead of the project workspace. This avoids POSIX lock failures on mounted and network-backed project folders.
+- Scope runtime directories by canonical workspace and Claude session, and report the actual bridge log path when startup fails.
+
 ## 0.2.6
 
 - Automatically prepare an isolated Python environment on first notebook use. Python 3.10+ remains a prerequisite; no manual package installation is needed for the default setup.

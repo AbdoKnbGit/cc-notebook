@@ -18,6 +18,19 @@ from storage import safe_cache, file_lock
 
 
 class BridgeTests(unittest.TestCase):
+    def test_runtime_is_user_local_and_scoped_to_workspace_and_session(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory) / "project"
+            workspace.mkdir()
+            first = runtime_dir(workspace, "session-one")
+            same = runtime_dir(workspace, "session-one")
+            other_session = runtime_dir(workspace, "session-two")
+            other_workspace = runtime_dir(workspace.parent / "other", "session-one")
+            self.assertEqual(first, same)
+            self.assertNotEqual(first, other_session)
+            self.assertNotEqual(first, other_workspace)
+            self.assertFalse(first.is_relative_to(workspace.resolve()))
+
     def test_loopback_listener_does_not_require_dns(self):
         with patch("socket.getfqdn", side_effect=AssertionError("DNS is unavailable")):
             with LoopbackServer(("127.0.0.1", 0), BaseHTTPRequestHandler) as server:

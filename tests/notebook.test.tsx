@@ -91,7 +91,7 @@ function world(on: any, options: { answer?: string; deny?: boolean; failedSave?:
     if (e.argv.includes('-c')) return { value: { exitCode: options.missingPython ? 1 : 0, stdout: options.missingPython ? '' : '/base/python\n', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
     if (!String(e.argv[1]).endsWith('/notebook/bridge.py')) return { value: { exitCode: 1, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
     bridgeCommands.push(e)
-    if (e.argv[2] === 'start') result = { runtime: '/work/.claude-notebook/runtime/test' }
+    if (e.argv[2] === 'start') result = { runtime: '/tmp/cc-notebook-runtime/test' }
     else if (e.argv[2] === 'doctor') result = { python: 'python', modules: { ipykernel: true } }
     else {
       const r = JSON.parse(e.init.stdin)
@@ -515,7 +515,7 @@ test('a broken native tool supplies the exact same-kernel CLI connection without
   const text = reply.context?.join('\n') || ''
   expect(text).toContain('SAME live notebook kernel')
   expect(text).toContain('/notebook/bridge.py')
-  expect(text).toContain('/work/.claude-notebook/runtime/test')
+  expect(text).toContain('/tmp/cc-notebook-runtime/test')
   expect(text).toContain('permission checks')
   expect(w.calls.some(c => c.action === 'run')).toBe(false)
   await run($, 'edit 2')
