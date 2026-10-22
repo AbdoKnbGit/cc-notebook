@@ -1,5 +1,5 @@
 import { expect, mock, test } from 'claude-code/testing'
-import { commandOf, initialLab, notebookContext, parseGenerated, TOOL, PANE } from '../hooks/notebook/model'
+import { bridgeContext, commandOf, initialLab, notebookContext, parseGenerated, TOOL, PANE } from '../hooks/notebook/model'
 import { editorRows } from '../hooks/notebook/editor'
 import { fitPlot, plotSource, clearImageCache } from '../hooks/notebook/images'
 import { diagram, inlineMath, mathText, raster, imageUri } from '../hooks/notebook/rich'
@@ -522,6 +522,14 @@ test('a broken native tool supplies the exact same-kernel CLI connection without
   const editing = await $.prompt.submit({ text: 'Change cell 2', wait: false, origin: { kind: 'composer' } })
   expect(editing.context?.join('\n')).toContain('Finish the open cell edit')
   expect(editing.context?.join('\n')).not.toContain('/notebook/bridge.py')
+})
+
+test('CLI instructions preserve path data while avoiding Windows shell backslash escaping', () => {
+  const data = JSON.parse(bridgeContext('C:\\my env\\python.exe', 'C:\\my plugin', 'C:\\work\\runtime', 'C:\\work\\λ.nb.md').split('\n').at(-1)!)
+  expect(data.argv).toEqual(['C:/my env/python.exe', 'C:/my plugin/notebook/bridge.py', 'request', '--runtime', 'C:/work/runtime'])
+  expect(data.stdin.path).toBe('C:/work/λ.nb.md')
+  const unix = JSON.parse(bridgeContext('/env/python', '/plugin', '/runtime', '/work/back\\slash.nb.md').split('\n').at(-1)!)
+  expect(unix.stdin.path).toBe('/work/back\\slash.nb.md')
 })
 
 test('complex LaTeX fallback leads with its full-resolution link instead of pages of raw commands', async ($, on) => {
