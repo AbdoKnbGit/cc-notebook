@@ -18,6 +18,7 @@ from rich import RichContent
 class Service:
     def __init__(self, workspace: Path, runtime: Path):
         self.docs = Documents(workspace)
+        self.runtime = Path(runtime)
         self.kernel = Kernel(workspace.resolve(), runtime)
         self.active = None
         self.lock = threading.Lock()
@@ -125,7 +126,10 @@ class Service:
                 name = name or str(self.docs.path(request["source"]).with_suffix(".nb.md"))
             if name:
                 path = self.docs.path(name)
-                with file_lock(safe_cache(self.docs.workspace, "locks", digest(str(path))[:24] + ".lock")):
+                # Bridge sessions share this per-workspace lock directory, but
+                # it lives on private local storage rather than the project
+                # filesystem (which may not support POSIX advisory locks).
+                with file_lock(self.runtime.parent / "locks" / (digest(str(path))[:24] + ".lock")):
                     return self._handle(request)
             return self._handle(request)
         finally:

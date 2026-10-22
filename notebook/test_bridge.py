@@ -29,7 +29,14 @@ class BridgeTests(unittest.TestCase):
             self.assertEqual(first, same)
             self.assertNotEqual(first, other_session)
             self.assertNotEqual(first, other_workspace)
+            self.assertEqual(first.parent, other_session.parent)
             self.assertFalse(first.is_relative_to(workspace.resolve()))
+            lock_a = first.parent / "locks" / "shared-notebook.lock"
+            lock_b = other_session.parent / "locks" / "shared-notebook.lock"
+            with file_lock(lock_a):
+                with self.assertRaisesRegex(ValueError, "another session"):
+                    with file_lock(lock_b):
+                        pass
 
     def test_loopback_listener_does_not_require_dns(self):
         with patch("socket.getfqdn", side_effect=AssertionError("DNS is unavailable")):

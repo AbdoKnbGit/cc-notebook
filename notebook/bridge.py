@@ -66,8 +66,9 @@ def runtime_dir(workspace, session):
     except OSError as error:
         raise ValueError(f"Cannot create the private notebook runtime directory: {error}") from error
 
-    identity = hashlib.sha256((str(Path(workspace).resolve()) + "\0" + session).encode("utf-8", errors="replace")).hexdigest()[:24]
-    return base / identity
+    workspace_key = hashlib.sha256(str(Path(workspace).resolve()).encode("utf-8", errors="replace")).hexdigest()[:24]
+    session_key = hashlib.sha256(session.encode("utf-8", errors="replace")).hexdigest()[:24]
+    return base / workspace_key / session_key
 
 
 def read_info(runtime):

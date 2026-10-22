@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.8
+
+- Move per-notebook cross-session locks into the same private local runtime directory as bridge startup locks. This avoids mounted or network-backed project filesystems reporting false notebook-busy conflicts.
+- Share document locks across Claude sessions for the same workspace while keeping their bridge runtimes isolated.
+
 ## 0.2.7
 
 - Keep the bridge lock and session registry in a private per-user local runtime directory instead of the project workspace. This avoids POSIX lock failures on mounted and network-backed project folders.
