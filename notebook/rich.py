@@ -43,7 +43,8 @@ def blocks(source):
                 prose.extend(lines[i:]); i = end; break
             flush()
             text = "".join(lines[i + 1:end]).rstrip("\n")
-            kind = "mermaid" if lang.strip() == "mermaid" else "math" if lang.strip() in ("math", "latex") else "markdown"
+            language = lang.strip().lower()
+            kind = "mermaid" if language == "mermaid" else "typst" if language in ("typst", "typ") else "math" if language in ("math", "latex") else "markdown"
             result.append({"kind": kind, "text": text if kind != "markdown" else "".join(lines[i:end + 1])})
             i = end + 1; continue
         stripped = line.strip()

@@ -475,11 +475,11 @@ export async function compile($: EngineInterface, job: Job, signal?: AbortSignal
   }
   if (signal?.aborted) return 'cancelled'
 
-  const { rowPt } = sizing(job.columns, job.cell, fontFit(job.env.metrics, job.size).columnPt)
+  const { rowPt, widthPt } = sizing(job.columns, job.cell, fontFit(job.env.metrics, job.size).columnPt)
   // The room height of a drawing in rows (less the pt rounding); unknown
   // without a room (the default applies).
   const roomRows = job.room ? Math.ceil(job.room.heightPt / rowPt - 0.01) : undefined
-  const text = await prepareMermaid(job.text, job.theme, dir, (path, svg) => fsWrite($, path, svg))
+  const text = await prepareMermaid(job.text, job.theme, dir, (path, svg) => fsWrite($, path, svg), { width: widthPt * 1.7, height: (job.room?.heightPt ?? 300) * 1.7 })
   if (signal?.aborted) return 'cancelled'
   let segments = splitSegments(text, job.columns, job.env.inline ? inlineBudget(job.cell) : SEGMENT_ROWS, job.size, roomRows)
   const base = job.base ?? job.env.cwd

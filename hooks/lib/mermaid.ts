@@ -6,7 +6,7 @@ import { FENCE } from './markdown'
 const MAX_SOURCE = 12000
 const MAX_BLOCKS = 8
 
-export async function mermaidSvg(source: string, theme: 'dark' | 'light'): Promise<string> {
+export async function mermaidSvg(source: string, theme: 'dark' | 'light', box?: { width: number; height: number }): Promise<string> {
   if (source.length > MAX_SOURCE || source.split(/[\n;]/).length > 160 || (source.match(/--|==|\.\./g) ?? []).length > 250) {
     throw new Error('Diagram too large for live rendering')
   }
@@ -23,7 +23,23 @@ export async function mermaidSvg(source: string, theme: 'dark' | 'light'): Promi
     '_group-fill': bg, '_group-hdr': dark ? '#303947' : '#eff6ff',
     '_inner-stroke': dark ? '#637083' : '#b7c3d0', '_key-badge': dark ? '#38475d' : '#e0ecff',
   }
-  const svg = (await renderMermaidSVG(source, { bg, fg, transparent: true, font: 'DejaVu Sans' }))
+  const options = { bg, fg, transparent: true, font: 'DejaVu Sans' }
+  let rendered = await renderMermaidSVG(source, options)
+  // Long horizontal graphs otherwise become unreadable postage stamps in
+  // a narrow pane. Choose a vertical layout only when its fitted labels
+  // would be substantially larger. This never changes the saved source.
+  if (box && /^\s*(?:graph|flowchart)\s+(?:LR|RL)\b/i.test(source)) {
+    const fit = (svg: string) => {
+      const width = Number(/<svg[^>]*\bwidth="([\d.]+)"/.exec(svg)?.[1])
+      const height = Number(/<svg[^>]*\bheight="([\d.]+)"/.exec(svg)?.[1])
+      return width > 0 && height > 0 ? Math.min(1, box.width / width, box.height / height) : 1
+    }
+    if (fit(rendered) < 0.7) {
+      const vertical = await renderMermaidSVG(source.replace(/^(\s*(?:graph|flowchart)\s+)(LR|RL)\b/i, '$1TD'), options)
+      if (fit(vertical) > fit(rendered) * 1.15) rendered = vertical
+    }
+  }
+  const svg = rendered
     .replace(/<style>[\s\S]*?<\/style>/g, '<style>text { font-family: "DejaVu Sans", sans-serif; } .mono { font-family: monospace; }</style>')
     .replace(/var\(--([\w-]+)\)/g, (_, key: string) => colours[key] ?? '')
     .replace(/ style="--[^"]*"/g, '')
@@ -38,6 +54,7 @@ export async function prepareMermaid(
   theme: 'dark' | 'light',
   dir: string,
   write: (path: string, svg: string) => Promise<unknown>,
+  box?: { width: number; height: number },
 ): Promise<string> {
   if (!/mermaid/i.test(text)) return text
   const lines = text.replace(/\r\n?/g, '\n').split('\n')
@@ -57,7 +74,7 @@ export async function prepareMermaid(
     if (end < lines.length && start[1] === '' && /^mermaid$/i.test(start[3] ?? '') && count < MAX_BLOCKS) {
       count++
       try {
-        const svg = await mermaidSvg(lines.slice(i + 1, end).join('\n'), theme)
+        const svg = await mermaidSvg(lines.slice(i + 1, end).join('\n'), theme, box)
         const path = `${dir}/mermaid-${count}.svg`
         await write(path, svg)
         result.push(`![Mermaid diagram](<${path.replace(/ /g, '%20')}>)`)

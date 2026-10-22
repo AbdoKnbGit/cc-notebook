@@ -54,7 +54,7 @@ export const DEFAULT_CELL: Cell = { width: 16, height: 32 }
 // room height now, `design-w` and `design-h` the design (the space at the
 // first compile of the text). Its live Typst blocks scale by
 // min(content width / design-w, height / design-h).
-export const TEMPLATE_VERSION = '11-notebook-mermaid-math'
+export const TEMPLATE_VERSION = '12-bounded-diagrams'
 // Part of the key of a picture with the row grid only: bump it when such a
 // picture or its bullet row changes, so the keys with the grid off stay.
 export const GRID_VERSION = '2'

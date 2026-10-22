@@ -1,7 +1,7 @@
 export type IuiTheme = 'dark' | 'light'
 export type CellKind = 'markdown' | 'python' | 'ai'
 export type ImageAsset = { file: string; width: number; height: number; preview: string; preview_width: number; preview_height: number; pixels?: string; plot?: string }
-export type RichBlock = { kind: 'markdown' | 'mermaid' | 'math' | 'image'; text: string; target?: string; asset?: ImageAsset; dark?: ImageAsset; light?: ImageAsset; error?: string }
+export type RichBlock = { kind: 'markdown' | 'mermaid' | 'typst' | 'math' | 'image'; text: string; target?: string; asset?: ImageAsset; dark?: ImageAsset; light?: ImageAsset; error?: string }
 export type CellOutput = { output_type: string; text?: string; ename?: string; evalue?: string; traceback?: string[]; data?: Record<string, string>; asset?: ImageAsset; rich?: RichBlock[] }
 export type NotebookCell = {
   id: string; type: CellKind; source: string; status: string; generated_from?: string

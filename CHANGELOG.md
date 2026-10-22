@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.1
+
+- Render Typst/CeTZ and Mermaid diagrams in notebook Markdown cells and rich Python outputs, with editable source preserved. Reuse the managed runtime and offline packages without running notebook Python.
+- Bound chat drawings by their actual height as well as width, including labels. Keep small drawings at natural size and reflow overly wide Mermaid flowcharts vertically when that improves readability.
+- Accept mathematical Unicode labels through the graphical Mermaid path. Handle UTF-8 preview requests independently of the Windows console encoding.
+- Add isolated, time-limited diagram compilation and a bounded cache that varies with source, size, theme and renderer version. Retain source/errors or text diagrams on unsupported terminals.
+- Add regression fixtures for the reported neural network and Maxwell graph, plus native pane, resizing, cache, UTF-8, and offline render checks.
+
 ## 0.3.0
 
 - Render Claude's conversation answers using the bundled Intelligent UI renderer: Markdown, local images, LaTeX, Typst computation, CeTZ, fletcher, cetz-plot and charts. Preserve the original conversation text and the existing notebook panel.

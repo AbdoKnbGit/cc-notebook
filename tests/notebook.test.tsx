@@ -17,6 +17,47 @@ const sample = () => ({ path: '/work/notebook.nb.md', revision: 'r1', title: 'Ex
   { id: 'ai', type: 'ai', source: 'Explain this result', status: 'ready', run: null },
 ] })
 
+test('Typst and Mermaid cells display a bounded native diagram while editing keeps the source', async ($, on) => {
+  const asset = { file: '/work/diagram.png', preview: '/work/diagram-preview.png', width: 240, height: 120, preview_width: 240, preview_height: 120 }
+  const w = world(on, { env: { TERM_PROGRAM: 'ghostty' }, drawing: asset })
+  on('fs.stat', () => ({ value: { kind: 'file', size: 2000, mtimeMs: 1, isLink: false } }))
+  await ($ as any).session.start({ source: 'startup', cwd: '/work' })
+  for (const kind of ['typst', 'mermaid']) {
+    const source = kind === 'typst' ? '#circle(radius: 10pt)' : 'graph LR\nQ[Charge density ρ] --> E[Electric field E]'
+    w.view.cells[0].source = '```' + kind + '\n' + source + '\n```'
+    w.view.cells[0].rich = [{ kind, text: source }]
+    await run($, 'open notebook.nb.md')
+    const ui = await mount($)
+    const image = await ui.find({ type: 'Image' })
+    expect(image?.props.source.file).toBe(asset.preview)
+    expect(image?.props.columns).toBe(20)
+    expect(image?.props.rows).toBe(5)
+    expect(await ui.find({ type: 'Code' })).toBeUndefined()
+    await ui.press({ key: 'lab-edit' })
+    expect((await ui.find({ type: 'Input' })).props.value).toBe(w.view.cells[0].source)
+    await ui.press({ key: 'lab-cancel-edit' })
+    await ui.unmount()
+  }
+  expect(w.calls.some(c => ['run', 'update', 'add'].includes(c.action))).toBe(false)
+})
+
+test('diagram previews fall back to a small terminal raster instead of hiding behind source', async ($, on) => {
+  const asset = { file: '/work/diagram.png', preview: '/work/diagram-preview.png', width: 240, height: 120, preview_width: 240, preview_height: 120, pixels: '/work/diagram-pixels.json' }
+  const w = world(on, { env: { TERM_PROGRAM: 'Windows_Terminal' }, drawing: asset })
+  on('fs.stat', () => ({ value: { kind: 'file', size: 2000, mtimeMs: 1, isLink: false } }))
+  on('fs.read', () => ({ value: JSON.stringify({ width: 1, height: 1, rgba: '4080c0ff' }) }))
+  w.view.cells[0].source = '```typst\n#circle(radius: 10pt)\n```'
+  w.view.cells[0].rich = [{ kind: 'typst', text: '#circle(radius: 10pt)' }]
+  await ($ as any).session.start({ source: 'startup', cwd: '/work' })
+  await run($, 'open notebook.nb.md')
+  const ui = await mount($)
+  const raster = await ui.find({ type: 'Raster' })
+  expect(raster?.props.columns).toBe(20)
+  expect(raster?.props.rows).toBe(5)
+  expect(await ui.find({ type: 'Code' })).toBeUndefined()
+  await ui.unmount()
+})
+
 test('automatic setup streams progress and uses the installed runtime for notebook operations', async ($, on) => {
   const w = world(on)
   let installs = 0
@@ -64,7 +105,7 @@ test('missing Python gives an actionable error without attempting downloads', as
   expect(spawned).toBe(false)
 })
 
-function world(on: any, options: { answer?: string; deny?: boolean; failedSave?: boolean; missingPython?: boolean; toolMissing?: boolean; toolBroken?: boolean; env?: Record<string, string> } = {}) {
+function world(on: any, options: { answer?: string; deny?: boolean; failedSave?: boolean; missingPython?: boolean; toolMissing?: boolean; toolBroken?: boolean; env?: Record<string, string>; drawing?: any } = {}) {
   mock.store(on)
   const clock = mock.clock(on)
   mock.env(on, { DISABLE_AUTOUPDATER: '1', CLAUDE_NOTEBOOK_PYTHON: 'python', ...options.env })
@@ -88,6 +129,7 @@ function world(on: any, options: { answer?: string; deny?: boolean; failedSave?:
   })
   on('process.run', (_$: any, e: any) => {
     let result: any = {}, error: string | null = null
+    if (String(e.argv[1]).endsWith('/notebook/drawing.py')) return { value: { exitCode: 0, stdout: JSON.stringify({ ok: true, asset: options.drawing }), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
     if (e.argv.includes('-c')) return { value: { exitCode: options.missingPython ? 1 : 0, stdout: options.missingPython ? '' : '/base/python\n', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
     if (!String(e.argv[1]).endsWith('/notebook/bridge.py')) return { value: { exitCode: 1, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
     bridgeCommands.push(e)

@@ -6,7 +6,7 @@ description: >-
 
 # Data science in the conversation and notebook
 
-Answer with the requested diagram, equation, plot, or explanation directly in the conversation. The plugin renders Markdown images, LaTeX, Mermaid, and Typst there. Opening the notebook panel alone does not fulfill a request to show a drawing.
+Answer with the requested diagram, equation, plot, or explanation directly in the conversation. The plugin renders Markdown images, LaTeX, Mermaid, and Typst there. An active notebook also renders Mermaid and Typst/CeTZ code fences in Markdown cells and rich outputs. Opening the notebook panel alone does not fulfill a request to show a drawing in chat.
 
 ## Connect to the notebook
 

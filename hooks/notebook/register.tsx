@@ -4,6 +4,7 @@ import type { EngineInterface, On, ElementTable, RenderSurface, RenderElement } 
 import { actions, bridgeContext, cleanText, commandOf, compactView, initialLab, notebookContext, outputText, parseGenerated, PANE, TOOL, type LabState, type NotebookView } from './model'
 import { editorRows } from './editor'
 import { plotSource, fitPlot, clearImageCache } from './images'
+import { drawingPreview, drawingBox, clearDrawingCache } from './drawings'
 import { graphicsReport, notebookGraphics } from './graphics'
 import { diagram, inlineMath, mathText, raster, imageUri, type Pixels } from './rich'
 import { terminalPlot } from './plot'
@@ -60,10 +61,10 @@ async function lightTheme($: EngineInterface) {
   catch { return false }
 }
 
-async function picture($: EngineInterface, elements: ElementTable, surface: RenderSurface, asset: ImageAsset, width: number, key: string, light: boolean, alt: string, site = PANE) {
+async function picture($: EngineInterface, elements: ElementTable, surface: RenderSurface, asset: ImageAsset, width: number, key: string, light: boolean, alt: string, site = PANE, diagramRows?: number) {
   const { Box, Text, Link } = elements
   const native = 'Image' in elements && (surface !== 'terminal' || imagesSupported)
-  const box = fitPlot(asset.width, asset.height, width, native ? 20 : 10)
+  const box = diagramRows === undefined ? fitPlot(asset.width, asset.height, width, native ? 20 : 10) : drawingBox(asset, width, diagramRows)
   const source = 'Image' in elements && (surface !== 'terminal' || imagesSupported) ? await plotSource($, asset.preview, box, sendBytes && surface === 'terminal') : null
   let drawing: RenderElement | null = null
   let plot = false
@@ -120,16 +121,24 @@ async function picture($: EngineInterface, elements: ElementTable, surface: Rend
   </Box>
 }
 
-async function richContent($: EngineInterface, elements: ElementTable, surface: RenderSurface, blocks: RichBlock[], width: number, key: string, light: boolean, site = PANE) {
+async function richContent($: EngineInterface, elements: ElementTable, surface: RenderSurface, blocks: RichBlock[], width: number, key: string, light: boolean, site = PANE, diagramRows = 20) {
   const { Box, Text, Markdown, Code, Link } = elements
   const parts: RenderElement[] = []
   for (const [index, block] of blocks.slice(0, 80).entries()) {
     const id = `${key}-${index}`
     if (block.kind === 'image') {
       parts.push(block.asset ? await picture($, elements, surface, block.asset, width, id, light, block.text, site) : <Text key={id} dimColor>{block.text || 'Image'} · {block.error || block.target}</Text>)
-    } else if (block.kind === 'mermaid') {
-      const art = diagram(block.text, width)
-      parts.push(<Box key={id} flexDirection="column" marginY={1}>{art ? <Text>{art.split(/([─│┌┐└┘┬┴┼├┤╭╮╰╯►◄▲▼▶◀]+)/).map((span, n) => <Text key={`${id}-span-${n}`} color={n % 2 ? 'permission' : 'text'}>{span}</Text>)}</Text> : <Box flexDirection="column"><Text dimColor>Diagram source · unsupported syntax or too wide for this pane</Text><Code source={block.text} language="mermaid" /></Box>}</Box>)
+    } else if (block.kind === 'mermaid' || block.kind === 'typst') {
+      const native = 'Image' in elements && (surface !== 'terminal' || imagesSupported)
+      let art = block.kind === 'mermaid' && !native ? diagram(block.text, width) : null
+      const preview = art ? {} : await drawingPreview($, block.kind, block.text, width, diagramRows, light, python, choice?.typst)
+      if (!preview.asset && !art && block.kind === 'mermaid') art = diagram(block.text, width)
+      if (preview.asset) parts.push(await picture($, elements, surface, preview.asset, width, id, light, `${block.kind} diagram`, site, diagramRows))
+      else if (art) parts.push(<Box key={id} marginY={1}><Text>{art.split(/([─│┌┐└┘┬┴┼├┤╭╮╰╯►◄▲▼▶◀]+)/).map((span, n) => <Text key={`${id}-span-${n}`} color={n % 2 ? 'permission' : 'text'}>{span}</Text>)}</Text></Box>)
+      else parts.push(<Box key={id} flexDirection="column" marginY={1}>
+        <Text dimColor>{`Diagram source · ${preview.error || 'preview unavailable'}`}</Text>
+        <Code source={block.text} language={block.kind} />
+      </Box>)
     } else if (block.kind === 'math') {
       const asset = light ? block.light : block.dark
       // Keep standalone typeset equations readable without scaling them to fill
@@ -149,13 +158,13 @@ async function richContent($: EngineInterface, elements: ElementTable, surface: 
   return <Box flexDirection="column">{parts}</Box>
 }
 
-async function outputContent($: EngineInterface, elements: ElementTable, surface: RenderSurface, outputs: CellOutput[], width: number, key: string, light: boolean, site = PANE) {
+async function outputContent($: EngineInterface, elements: ElementTable, surface: RenderSurface, outputs: CellOutput[], width: number, key: string, light: boolean, site = PANE, diagramRows = 20) {
   const { Box, Text } = elements
   const parts: RenderElement[] = []
   for (const [index, output] of outputs.entries()) {
     const id = `${key}-out-${index}`
     if (output.asset) parts.push(await picture($, elements, surface, output.asset, width, id, light, 'Python image', site))
-    else if (output.rich?.length) parts.push(await richContent($, elements, surface, output.rich, width, id, light, site))
+    else if (output.rich?.length) parts.push(await richContent($, elements, surface, output.rich, width, id, light, site, diagramRows))
     else parts.push(<Text key={id} color={output.output_type === 'error' ? 'error' : undefined}>{outputText(output).slice(0, 12000)}</Text>)
   }
   return <Box flexDirection="column">{parts}</Box>
@@ -183,6 +192,7 @@ async function prepareRuntime($: EngineInterface, forceManaged = false, repair =
     await openPane($)
     try {
       const result = await setupRuntime($, async setup => { await update($, lab, s => ({ ...s, setup })) }, repair)
+      clearDrawingCache()
       if (result.typst) await adoptNotebookTypst($, result.typst).catch(() => undefined)
       await update($, lab, s => ({ ...s, notice: result.warning || 'Notebook dependencies ready. Python, Typst and MiTeX checked.' }))
       return result
@@ -215,6 +225,7 @@ async function setView($: EngineInterface, view: NotebookView) {
 }
 
 async function perform($: EngineInterface, action: string, extra: Record<string, unknown> = {}) {
+  if (action === 'status' || action === 'open') clearDrawingCache()
   if (action === 'interrupt') generation?.abort()
   const before = await read($, lab)
   if (before.busy && action !== 'interrupt') throw new Error('An operation is already running. Interrupt it or wait.')
@@ -377,6 +388,7 @@ export async function stopNotebook($: EngineInterface, reason: string) {
       closing = true
       generation?.abort()
       clearImageCache()
+      clearDrawingCache()
       pixelCache.clear()
       plotCache.clear()
       displayed.clear()
@@ -480,7 +492,7 @@ export function registerNotebook(on: On) {
       const light = await lightTheme($)
       for (const [i, c] of executions.entries()) {
         const cellNumber = operation.cellNumbers?.[i] ?? result.cells.indexOf(c) + 1
-        pictures.push(<Box key={`result-${c.id}`} flexDirection="column"><Text dimColor>{`Cell ${cellNumber} · ${c.status}`}</Text>{await outputContent($, elements, e.surface, c.run!.outputs, (e.viewport?.columns ?? 80) - 8, `tool-${c.id}`, light, e.requestId)}</Box>)
+        pictures.push(<Box key={`result-${c.id}`} flexDirection="column"><Text dimColor>{`Cell ${cellNumber} · ${c.status}`}</Text>{await outputContent($, elements, e.surface, c.run!.outputs, (e.viewport?.columns ?? 80) - 8, `tool-${c.id}`, light, e.requestId, Math.max(3, Math.min(24, Math.floor((e.viewport?.rows ?? 40) / 2))))}</Box>)
         if (c.run!.outputs.some(o => o.asset)) continue
         for (const file of c.run!.images.slice(-3)) {
           const info = c.run?.image_info?.[file]
@@ -640,7 +652,8 @@ export function registerNotebook(on: On) {
       </Box>
     }
     const light = await lightTheme($)
-    const markdown = current?.type === 'markdown' ? await richContent($, elements, e.surface, current.rich ?? [{ kind: 'markdown', text: current.source }], width - 4, current.id, light) : null
+    const diagramRows = Math.max(3, Math.min(24, Math.floor((e.props.scroll?.bodyRows || e.viewport?.rows || 40) / 2)))
+    const markdown = current?.type === 'markdown' ? await richContent($, elements, e.surface, current.rich ?? [{ kind: 'markdown', text: current.source }], width - 4, current.id, light, PANE, diagramRows) : null
     const plots = []
     for (const file of current?.run?.outputs.some(o => o.asset) ? [] : current?.run?.images ?? []) {
       const info = current?.run?.image_info?.[file]
@@ -680,7 +693,7 @@ export function registerNotebook(on: On) {
           </Box>
           {current.run ? <Box flexDirection="column">
             <Text dimColor>OUTPUT {current.status === 'saved' ? '· from an earlier kernel' : ''}</Text>
-            {await outputContent($, elements, e.surface, current.run.outputs, width - 4, current.id, light)}
+            {await outputContent($, elements, e.surface, current.run.outputs, width - 4, current.id, light, PANE, diagramRows)}
             {plots}
           </Box> : null}
         </Box> : <Text>No cells yet. Add a cell above.</Text>}

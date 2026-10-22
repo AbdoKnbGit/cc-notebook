@@ -30,8 +30,8 @@
 // theme.height, theme.page-width are the design values) and drawn scaled by
 // one factor for the page: f = min(content width / design content width,
 // height / design-h), without the height term when the height is unknown.
-// A block that is still wider than its space after f is made smaller to fit
-// (never larger than f); a tall block is never made smaller (the page grows).
+// Each block is fitted to both its width and room height after layout.
+// Fixed-size drawings are never enlarged when the terminal grows.
 //
 // doc JSON: { "base": "/dir/for/relative/images", "segments": ["md", ...],
 //             "images": ["/abs/path.png", ...] (optional allow-list) }
@@ -985,16 +985,18 @@
       // Lay the code out in the design width (in design units: the space / f
       // when that is less, so 100% widths fill the space here).
       let w = calc.min(design-content-w, space / factor)
-      // Fit guard: a part with a fixed size wider than w gets a smaller
-      // factor, so it is never cut. A tall drawing is never made smaller
-      // (the page grows; the factor has the height ratio already).
-      let k = factor
+      // Measure the actual drawing, including labels and strokes. The
+      // design's height is a hint to source code, not its measured height.
+      let k = calc.min(1, factor)
       let wide = needed-width(drawing, w)
       if wide > w { k = calc.min(k, space / wide) }
       // Lay a too-wide drawing out in the width it needs: in the width w, an
       // align(center, ..) puts the extra width left of the block, where the
       // scale cannot bring it back (it is cut off at the page edge).
-      let drawn = scale(k * 100%, origin: top + left, reflow: true, std.block(width: calc.max(w, wide), drawing))
+      let laid-out = std.block(width: calc.max(w, wide), drawing)
+      let tall = measure(laid-out).height
+      if room-h > 0pt and tall > 0pt { k = calc.min(k, room-h / tall) }
+      let drawn = scale(k * 100%, origin: top + left, reflow: true, laid-out)
       // The grid: the drawing centred in whole rows.
       if on-grid { std.block(height: rows-up(measure(drawn, width: space).height), align(horizon, drawn)) } else { drawn }
     }))
