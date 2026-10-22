@@ -233,6 +233,42 @@ async function perform($: EngineInterface, action: string, extra: Record<string,
   }
 }
 
+function toolView(view: NotebookView, action: string, args: Record<string, unknown>, previous?: NotebookView | null) {
+  const compact = compactView(view)
+  const cellId = typeof args.id === 'string' ? args.id : undefined
+  let focusCellId = cellId
+  let cells = compact.cells
+  const partial = !['status', 'open', 'new', 'demo', 'import'].includes(action)
+
+  if (action === 'add') {
+    const anchor = cellId ? compact.cells.findIndex(c => c.id === cellId) : -1
+    const added = compact.cells[anchor >= 0 ? anchor + 1 : compact.cells.length - 1]
+    focusCellId = added?.id
+    cells = added ? [added] : []
+  } else if (action === 'run') {
+    cells = compact.cells.filter(c => c.id === cellId)
+  } else if (action === 'run_all') {
+    const oldRuns = new Map((previous?.cells ?? []).map(c => [c.id, c.run]))
+    cells = compact.cells.filter(c => {
+      if (c.type !== 'python' || !c.run || !['ok', 'error'].includes(c.status)) return false
+      const old = oldRuns.get(c.id)
+      return !old || old.at !== c.run.at || old.execution_count !== c.run.execution_count
+    })
+  } else if (['update', 'move'].includes(action)) {
+    cells = compact.cells.filter(c => c.id === cellId).map(c => ({ ...c, run: null }))
+  } else if (partial) {
+    cells = []
+  }
+  const cellNumbers = cells.map(c => view.cells.findIndex(item => item.id === c.id) + 1)
+  const focusCellNumber = focusCellId ? view.cells.findIndex(c => c.id === focusCellId) + 1 : undefined
+
+  return {
+    ...compact,
+    cells,
+    _notebookOperation: { action, cellId, focusCellId, focusCellNumber, cellNumbers, cellType: args.type, partial, cellCount: view.cells.length },
+  }
+}
+
 function act($: EngineInterface, action: string, extra: Record<string, unknown> = {}) {
   return perform($, action, extra).then(() => undefined).catch(error => update($, lab, s => ({ ...s, error: messageOf(error) })).then(() => undefined))
 }
@@ -291,7 +327,7 @@ async function openPane($: EngineInterface) {
 
 async function registerTool($: EngineInterface) {
   await $.tool.register({ name: 'notebook', isDeferred: false,
-    description: 'Read, edit and run the active Lab .nb.md notebook in its persistent Python kernel. Use status to get cell IDs, sources, saved outputs and revision; update changes source, run executes Python, vars inspects live variables. Supply the current revision for mutations. Omit path to use the notebook open in /lab. For export, path selects the existing source notebook and destination is the new .ipynb or .md output path. For import, source is the existing .ipynb file and path optionally names the new .nb.md notebook. AI instructions are cells; generated Python never runs automatically. NotebookEdit is a separate built-in tool for .ipynb files, not this notebook. Outputs are bounded text and image paths; read image paths when visual inspection is needed.',
+    description: 'Read, edit and run the active Lab .nb.md notebook in its persistent Python kernel. Use status to get the full notebook with cell IDs, sources, saved outputs and revision; mutation replies focus on the affected cell, and run/run_all return only output produced by that execution. Update changes source, run executes Python, vars inspects live variables. Supply the current revision for mutations. Omit path to use the notebook open in /lab. For export, path selects the existing source notebook and destination is the new .ipynb or .md output path. For import, source is the existing .ipynb file and path optionally names the new .nb.md notebook. AI instructions are cells; generated Python never runs automatically. NotebookEdit is a separate built-in tool for .ipynb files, not this notebook. Outputs are bounded text and image paths; read image paths when visual inspection is needed.',
     inputSchema: { type: 'object', properties: { action: { type: 'string', enum: [...actions] }, path: { type: 'string', description: 'Existing source .nb.md path for export, target notebook path for open/new, or optional output .nb.md path for import. Omit to use the active notebook.' }, revision: { type: 'string', description: 'Current revision returned by status; required for notebook mutations.' }, id: { type: 'string', description: 'Cell ID returned by status.' }, type: { type: 'string', enum: ['markdown', 'python', 'ai'], description: 'Cell type for add.' }, source: { type: 'string', description: 'Cell contents for add/update; for import, the existing .ipynb input file path.' }, direction: { type: 'string', enum: ['up', 'down'] }, destination: { type: 'string', description: 'New output path for export. This is not the source notebook path.' }, format: { type: 'string', enum: ['ipynb', 'markdown'] }, timeout: { type: 'number', minimum: 1, maximum: 300 } }, required: ['action'], additionalProperties: false },
   })
 }
@@ -400,21 +436,49 @@ export function registerNotebook(on: On) {
       }
       if (output && typeof output === 'object' && 'content' in output) output = JSON.parse((output as { content: { text?: string }[] }).content.map(c => c.text ?? '').join('\n'))
     } catch { return next(e) }
-    const result = output as NotebookView | null
+    const result = output as (NotebookView & { _notebookOperation?: { action: string; cellId?: string; focusCellId?: string; focusCellNumber?: number; cellNumbers?: number[]; cellType?: string; cellCount?: number } }) | null
     if (!result || !Array.isArray(result.cells)) return next(e)
-    const cells = result.cells.filter(c => c.run?.outputs?.length || c.run?.images?.length).slice(-3)
-    if (!cells.length) return next(e)
+    const operation = result._notebookOperation
+    if (!operation) return next(e)
+    const action = operation.action
+    const executions = ['run', 'run_all'].includes(action)
+      ? result.cells.filter(c => c.run && (c.run.outputs?.length || c.run.images?.length))
+      : []
+    const focused = operation.focusCellId ? result.cells.find(c => c.id === operation.focusCellId) : undefined
+    const number = focused ? operation.focusCellNumber ?? result.cells.indexOf(focused) + 1 : null
+    const typeLabel = (type?: string) => type === 'ai' ? 'AI' : type ? type.charAt(0).toUpperCase() + type.slice(1) : 'cell'
+    const labels: Record<string, string> = {
+      add: 'Added cell', update: 'Updated cell', move: 'Moved cell', remove: 'Removed cell',
+      run: 'Cell run', run_all: 'Python cells run', status: 'Notebook status', open: 'Notebook opened',
+      new: 'Notebook created', demo: 'Demo notebook', import: 'Notebook imported', vars: 'Kernel variables',
+      restart: 'Kernel restarted', interrupt: 'Execution interrupted',
+    }
+    const operationTitle = action === 'add' && focused
+      ? `Added ${typeLabel(focused.type)} cell · Cell ${number}`
+      : action === 'run' && focused
+        ? `Cell ${number} · ${typeLabel(focused.type)} · ${focused.status}`
+        : action === 'run_all'
+          ? `Ran ${executions.length} Python cell${executions.length === 1 ? '' : 's'}`
+          : focused
+            ? `${labels[action] ?? 'Notebook updated'} · Cell ${number} · ${typeLabel(focused.type)}`
+            : `${labels[action] ?? 'Notebook updated'} · ${operation.cellCount ?? result.cells.length} cells`
+    const sourcePreview = focused && ['add', 'update'].includes(action)
+      ? cleanText(focused.source).replace(/\s+/g, ' ').trim().slice(0, 280)
+      : ''
     const pictures = []
-    const light = await lightTheme($)
-    for (const c of cells) {
-      pictures.push(<Box key={`result-${c.id}`} flexDirection="column"><Text dimColor>{`Cell ${result.cells.indexOf(c) + 1} · ${c.status}`}</Text>{await outputContent($, elements, e.surface, c.run!.outputs, (e.viewport?.columns ?? 80) - 8, `tool-${c.id}`, light, e.requestId)}</Box>)
-      if (c.run!.outputs.some(o => o.asset)) continue
-      for (const file of c.run!.images.slice(-3)) {
-      const info = c.run?.image_info?.[file]
-      pictures.push(await picture($, elements, e.surface, { file, width: info?.width ?? 800, height: info?.height ?? 600, preview: info?.preview ?? file, preview_width: 800, preview_height: 600, pixels: info?.pixels }, (e.viewport?.columns ?? 80) - 8, `tool-old-${file}`, light, 'Python plot', e.requestId))
+    if (executions.length) {
+      const light = await lightTheme($)
+      for (const [i, c] of executions.entries()) {
+        const cellNumber = operation.cellNumbers?.[i] ?? result.cells.indexOf(c) + 1
+        pictures.push(<Box key={`result-${c.id}`} flexDirection="column"><Text dimColor>{`Cell ${cellNumber} · ${c.status}`}</Text>{await outputContent($, elements, e.surface, c.run!.outputs, (e.viewport?.columns ?? 80) - 8, `tool-${c.id}`, light, e.requestId)}</Box>)
+        if (c.run!.outputs.some(o => o.asset)) continue
+        for (const file of c.run!.images.slice(-3)) {
+          const info = c.run?.image_info?.[file]
+          pictures.push(await picture($, elements, e.surface, { file, width: info?.width ?? 800, height: info?.height ?? 600, preview: info?.preview ?? file, preview_width: 800, preview_height: 600, pixels: info?.pixels }, (e.viewport?.columns ?? 80) - 8, `tool-old-${file}`, light, 'Python plot', e.requestId))
+        }
       }
     }
-    return <Box flexDirection="column"><Text bold>{result.title} · notebook results</Text>{pictures}<Text dimColor>Open /lab to edit cells and inspect outputs.</Text></Box>
+    return <Box flexDirection="column"><Text bold>{result.title} · {operationTitle}</Text>{sourcePreview ? <Text>{sourcePreview}</Text> : null}{pictures}{action === 'add' && focused?.type === 'ai' ? <Text dimColor>AI instructions have no execution output. Choose Generate cells in /lab when you want Claude to apply them.</Text> : null}{action === 'add' && focused?.type === 'python' ? <Text dimColor>Python cell added; run it when you want to execute it.</Text> : null}{action === 'update' && focused?.type === 'python' ? <Text dimColor>Source saved. Run this cell to refresh its output.</Text> : null}{executions.length ? <Text dimColor>Only output from this operation is shown. Open /lab for the full notebook.</Text> : <Text dimColor>Open /lab to inspect the notebook.</Text>}</Box>
   })
 
   on('tool.call', { tool: new RegExp(`^${TOOL}$`) }, async ($, e) => {
@@ -431,8 +495,9 @@ export function registerNotebook(on: On) {
           if (answer !== 'Allow once') return { deny: 'Notebook action cancelled.' }
         }
       }
+      const previous = action === 'run_all' ? (await read($, lab)).view : null
       const result = await perform($, action, args)
-      const payload = Array.isArray(result.cells) ? compactView(result as unknown as NotebookView) : result
+      const payload = Array.isArray(result.cells) ? toolView(result as unknown as NotebookView, action, args, previous) : result
       // Claude Code validates tool replies as text content. Returning an object
       // here let the operation succeed but made the host reject the response.
       return { result: typeof payload === 'string' ? payload : JSON.stringify(payload) }

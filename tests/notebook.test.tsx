@@ -99,7 +99,7 @@ function world(on: any, options: { answer?: string; deny?: boolean; failedSave?:
       if (r.action === 'update' && options.failedSave) error = 'Notebook changed on disk. Refresh before saving.'
       else if (r.action === 'update') { view.cells.find((c: any) => c.id === r.id).source = r.source; view.revision = 'r2' }
       else if (r.action === 'add') view.cells.push({ id: 'added', type: r.type, source: r.source ?? '', status: 'ready', run: null })
-      else if (r.action === 'run') { view.kernel.alive = true; view.cells.find((c: any) => c.id === r.id).run = { outputs: [{ output_type: 'execute_result', data: { 'text/plain': '42' } }], images: [], duration_ms: 12, at: 1 }; view.cells.find((c: any) => c.id === r.id).status = 'ok' }
+      else if (r.action === 'run') { view.kernel.alive = true; const cell = view.cells.find((c: any) => c.id === r.id), oldRun = cell.run; cell.run = { outputs: [{ output_type: 'execute_result', data: { 'text/plain': '42' } }], images: oldRun?.images ?? [], image_info: oldRun?.image_info, duration_ms: 12, at: (oldRun?.at ?? 0) + 1 }; cell.status = 'ok' }
       else if (r.action === 'apply_generation') view.cells.push(...r.cells.map((c: any, i: number) => ({ ...c, id: `gen-${i}`, status: 'ready', generated_from: r.id, run: null })))
       result = r.action === 'context' ? { prompt: 'Explain', context: [], context_key: 'ctx' } : view
     }
@@ -192,11 +192,13 @@ test('notebook tool returns bounded text results and draws inline plots on suppo
   on('fs.stat', () => ({ value: { kind: 'file', size: 1000, mtimeMs: 1, isLink: false } }))
   on('fs.read', () => ({ value: { base64: PNG } }))
   await ($ as any).session.start({ source: 'startup', cwd: '/work' })
-  const reply = await $.tool.call({ tool: TOOL, action: 'open', path: '/work/notebook.nb.md' } as never)
+  const reply = await $.tool.call({ tool: TOOL, action: 'run', id: 'py', revision: 'r1' } as never)
   expect(JSON.stringify(reply)).not.toContain('image/png')
   expect(typeof reply.result).toBe('string')
-  expect(JSON.parse(reply.result as string).cells[1].run.images).toContain(file)
-  expect(w.calls[0].action).toBe('open')
+  expect(JSON.parse(reply.result as string).cells).toHaveLength(1)
+  expect(JSON.parse(reply.result as string).cells[0].run.images).toContain(file)
+  expect(JSON.parse(reply.result as string)._notebookOperation.action).toBe('run')
+  expect(w.calls[0].action).toBe('run')
   for (const surface of ['terminal', 'desktop', 'vscode'] as const) {
     const ui = await $.ui.mount({ plugin: 'cc-notebook', surface, component: 'ToolResult', requestId: 'notebook-output', props: { tool_use_id: 'notebook-output', tool: TOOL, output: JSON.stringify(reply), isErrored: false }, viewport: { columns: 100, rows: 40 } } as any)
     if (surface === 'terminal') {
@@ -206,6 +208,25 @@ test('notebook tool returns bounded text results and draws inline plots on suppo
     expect(await ui.find({ type: 'Text', text: /Experiment/ })).toBeDefined()
     await ui.unmount()
   }
+})
+
+test('adding an AI cell hides old executions and shows only the new instruction', async ($, on) => {
+  const w = world(on)
+  const oldImage = '/work/old-python-plot.png'
+  w.view.cells[1].run = { outputs: [{ output_type: 'stream', text: 'OLD_CELL_OUTPUT' }], images: [oldImage], duration_ms: 10, at: 1 }
+  const reply = await $.tool.call({ tool: TOOL, action: 'add', type: 'ai', source: 'Explain this experiment without running code.', revision: 'r1' } as never)
+  const payload = JSON.parse(reply.result as string)
+  expect(payload._notebookOperation.action).toBe('add')
+  expect(payload.cells).toHaveLength(1)
+  expect(payload.cells[0]).toMatchObject({ id: 'added', type: 'ai', run: null })
+  expect(reply.result).not.toContain(oldImage)
+  expect(reply.result).not.toContain('OLD_CELL_OUTPUT')
+  const ui = await $.ui.mount({ plugin: 'cc-notebook', surface: 'terminal', component: 'ToolResult', requestId: 'ai-cell-added', props: { tool_use_id: 'ai-cell-added', tool: TOOL, output: JSON.stringify(reply), isErrored: false }, viewport: { columns: 100, rows: 40 } } as any)
+  expect(await ui.find({ type: 'Text', text: /Added AI cell/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /AI instructions have no execution output/ })).toBeDefined()
+  expect(await ui.find({ type: 'Image' })).toBeUndefined()
+  expect((await ui.drawn()).toString()).not.toContain('OLD_CELL_OUTPUT')
+  await ui.unmount()
 })
 
 test('SSH uses cached PNG bytes and retains the original image path', async ($, on) => {
