@@ -1,3 +1,4 @@
+export type IuiTheme = 'dark' | 'light'
 export type CellKind = 'markdown' | 'python' | 'ai'
 export type ImageAsset = { file: string; width: number; height: number; preview: string; preview_width: number; preview_height: number; pixels?: string; plot?: string }
 export type RichBlock = { kind: 'markdown' | 'mermaid' | 'math' | 'image'; text: string; target?: string; asset?: ImageAsset; dark?: ImageAsset; light?: ImageAsset; error?: string }
@@ -23,6 +24,6 @@ export type LabState = {
 
 declare module 'claude-code' {
   interface PluginState {
-    'cc-notebook': { lab: LabState; done: number }
+    'cc-notebook': { lab: LabState; done: number; isOn: boolean; uiDone: number }
   }
 }

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.0
+
+- Render Claude's conversation answers using the bundled Intelligent UI renderer: Markdown, local images, LaTeX, Typst computation, CeTZ, fletcher, cetz-plot and charts. Preserve the original conversation text and the existing notebook panel.
+- Add offline Mermaid SVG rendering in chat with theme-aware colours, source fallback, bounded input and render-cache isolation. Use the compact Dagre bundle to fit Claude's hook module size limit.
+- Reuse the notebook's managed Typst installation, including its configured home, and activate chat rendering after first-time notebook setup without a second install.
+- Bundle data science and drawing skills. New notebook-related drawings retain editable source in cells; interpretations use actual saved output and notebook Python still runs in its shared kernel.
+- Keep cell-scoped tool results and compact notebook display equations. Isolate notebook and transcript redraw state.
+- Add renderer regression tests and real offline visual checks in dark/light themes at narrow/wide sizes. Retain upstream licences and package notices.
+
 ## 0.2.12
 
 - Keep standalone LaTeX display equations compact in wide terminal panes.

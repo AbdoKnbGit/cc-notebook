@@ -1,7 +1,7 @@
 {
   "name": "cc-notebook",
-  "version": "0.2.12",
-  "description": "Cell-based Markdown and persistent Python notebooks inside Claude Code.",
+  "version": "0.3.0",
+  "description": "A data science lab in Claude Code: persistent notebooks and rendered chat images, equations, diagrams and charts.",
   "author": {
     "name": "AbdoKnbGit",
     "url": "https://github.com/AbdoKnbGit"
@@ -14,7 +14,11 @@
     "python",
     "markdown",
     "jupyter",
-    "claude-code"
+    "claude-code",
+    "data-science",
+    "mermaid",
+    "latex",
+    "typst"
   ],
   "types": "./types/index.d.ts",
   "license": "MIT"

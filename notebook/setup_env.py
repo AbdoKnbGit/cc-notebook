@@ -185,16 +185,30 @@ def unpack_binary(archive, destination, expected):
     destination.chmod(0o700)
 
 
-def install_typst(home):
+def typst_binary(home):
+    asset, _ = typst_asset()
+    name = "typst-" + asset
+    folder = home / "tools" / ("typst-" + TYPST_VERSION) / name.split(".")[0]
+    return folder / ("typst.exe" if platform.system() == "Windows" else "typst")
+
+
+def find_typst(home):
+    """Read-only discovery shared by notebook setup and transcript rendering."""
     configured = os.environ.get("CLAUDE_NOTEBOOK_TYPST") or shutil.which("typst")
     if configured and typst_works(configured):
         return str(configured)
+    binary = typst_binary(home)
+    return str(binary) if binary.is_file() and typst_works(binary) else None
+
+
+def install_typst(home):
+    found = find_typst(home)
+    if found:
+        return found
     asset, checksum = typst_asset()
     name = "typst-" + asset
-    folder = home / "tools" / ("typst-" + TYPST_VERSION) / name.split(".")[0]
-    binary = folder / ("typst.exe" if platform.system() == "Windows" else "typst")
-    if binary.is_file() and typst_works(binary):
-        return str(binary)
+    binary = typst_binary(home)
+    folder = binary.parent
     emit(progress="Downloading Typst for LaTeX and SVG previews…")
     folder.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="download-", dir=folder) as temp:
@@ -250,11 +264,19 @@ def setup(home, log, repair=False):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repair", action="store_true", help="Build a replacement environment without modifying existing kernels")
+    parser.add_argument("--find-typst", action="store_true", help="Report the existing Typst executable without installing or changing anything")
     args = parser.parse_args()
     if sys.version_info < (3, 10):
         emit(ok=False, error="Python 3.10 or newer is required. Install Python, reopen your terminal, then retry /lab setup.")
         return 1
     home = cache_home()
+    if args.find_typst:
+        try:
+            emit(typst=find_typst(home))
+            return 0
+        except Exception:
+            emit(typst=None)
+            return 1
     log = None
     try:
         home.mkdir(parents=True, exist_ok=True, mode=0o700)

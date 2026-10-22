@@ -1,16 +1,18 @@
 {
   "name": "cc-notebook",
-  "version": "0.2.12",
+  "version": "0.3.0",
   "private": false,
   "scripts": {
     "build": "tsc -p .",
     "test": "python -m unittest discover -s notebook -p \"test_*.py\" -v",
     "test:plugin": "claude plugin test .",
     "validate": "claude plugin validate .",
-    "build:rich": "node scripts/build_rich.mjs"
+    "build:rich": "node scripts/build_rich.mjs",
+    "test:visuals": "node scripts/test_visuals.mjs"
   },
   "devDependencies": {
     "beautiful-mermaid": "1.1.3",
+    "beautiful-mermaid-svg": "npm:beautiful-mermaid@0.1.3",
     "esbuild": "0.28.2",
     "typescript": "^5.9.3"
   }

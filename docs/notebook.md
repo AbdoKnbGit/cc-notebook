@@ -106,10 +106,12 @@ Notebook changes do not rewrite the main Claude conversation or system prompt on
 npm ci
 npm run build
 npm test
+npm run test:plugin
+npm run test:visuals
 npm run validate
 ```
 
-Claude generates `.claude-plugin/types/` when it loads the plugin. Launch it once before the first TypeScript build. `npm test` runs actual Python/kernel/bridge integration tests. `npm run test:plugin` tests the notebook UI under Claude Code. No paid model request is required by the automated suite.
+Claude generates `.claude-plugin/types/` when it loads the plugin. Launch it once before the first TypeScript build. `npm test` runs actual Python/kernel/bridge integration tests. `npm run test:plugin` tests the notebook and transcript UI under Claude Code. `npm run test:visuals` requires the managed Typst installed by `/lab setup` and compiles the gallery fixtures offline in both themes at 280/700pt widths. Inspect its PNGs under `.cache/transcript-previews/`. No paid model request is required by the automated suite.
 
 The design borrows file-versus-SSH image transport and resize generation ideas from [show-your-work](https://github.com/iamumeransari/claude-show-your-work). See [attribution](../THIRD_PARTY_NOTICES.md).
 ## Visual notebook

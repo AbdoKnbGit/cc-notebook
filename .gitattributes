@@ -1,1 +1,7 @@
-* text=auto
+* text=auto eol=lf
+*.sh text eol=lf
+*.wasm binary
+*.png binary
+
+# Keep upstream vendored sources verbatim.
+render/packages/** -whitespace

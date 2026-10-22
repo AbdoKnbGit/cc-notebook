@@ -1,10 +1,27 @@
 # Claude Code Notebook
 
-A cell-based notebook plugin for Claude Code. Mix Markdown, persistent Python, and AI instruction cells; review generated cells before running them; inspect variables; and export to Jupyter.
+A data science lab inside Claude Code: persistent Python notebooks and visual answers in the conversation. Ask for a neural network, equation, diagram or plot and see it in the terminal transcript, with editable source and execution results kept in your notebook.
+
+## Visual answers in chat
+
+In Ghostty or Kitty on Linux/macOS (including a Ghostty WSL session running Linux Claude), open your notebook and ask:
+
+```text
+/lab demo
+Draw an illustrative neural network in chat and save its diagram in this notebook.
+```
+
+Or ask: “Explain cell 3's saved result and show its plot here.” The `data-science` skill guides Claude to read the current notebook, use its cell IDs/revisions and saved outputs, and keep a new diagram's editable source in a Markdown cell. Python operations still use the notebook's persistent kernel. A drawing does not run Python or train a model.
+
+The bundled transcript renderer supports Markdown, local images, LaTeX, Mermaid flow/state/sequence/class/ER diagrams, and live Typst blocks using CeTZ, fletcher and cetz-plot. It includes recipes and a preview checker for fractals, neural networks, function plots, candlesticks, heatmaps and charts. It is adapted from [Intelligent UI](https://github.com/razorback16/cc-intelligent-ui), with its licences retained; no separate Intelligent UI installation is needed.
+
+`/iui` controls this plugin's chat visuals. `/iui details` reports the renderer and terminal; `/iui size 100` follows terminal text size; `/iui height half` caps drawing height; `/iui theme` lists themes; `/iui off` restores plain chat output. `/lab` continues to control the notebook. The notebook panel retains its existing renderer; the added Typst/CeTZ drawings appear in chat. Diagram source survives notebook export; standard Jupyter viewers show Typst fences as code and Mermaid support varies by viewer.
+
+Chat rendering reuses Typst from `/lab setup`, even when that binary is not on PATH. Its packages and Mermaid renderer are bundled for offline rendering. Unsupported terminals retain normal text and notebook fallbacks. Native Windows terminals do not gain image support by installing this plugin; use the supported Linux terminal/Claude combination inside WSL. Terminal multiplexers such as tmux/screen currently retain text. See `/iui details` before forcing image protocols.
 
 ## Install
 
-Install Python 3.10+ and Claude Code with function hooks (tested with 2.1.306). In Claude Code, run:
+Install Python 3.10+ and Claude Code with function hooks (tested with 2.1.308). In Claude Code, run:
 
 ```text
 /plugin install cc-notebook --marketplace AbdoKnbGit/cc-notebook
@@ -89,5 +106,9 @@ To export again, choose a new filename: `/lab export ipynb notebooks/analysis-v2
 - Ordered Python Markdown, LaTeX, PNG/JPEG and SVG output. SVG previews require optional Typst.
 - Portable Jupyter exports with embedded local Markdown image attachments.
 - Bounded, content-addressed plot previews and Jupyter export.
+- Rendered chat answers with transparent backgrounds, terminal-aware sizing, text selection/copy, images, math, diagrams and charts.
+- Bundled `data-science` and `intelligent-ui` skills connecting visual explanations to notebook sources and saved results.
+
+Chat images are a presentation layer: the saved conversation remains Markdown. Notebook snapshots remain bounded and attached to the current user message; redraws never add plot bytes or changing cell state to the system prompt. Notebook tool replies still show only cells relevant to that operation. Rendering caches are separate from notebook files and the shared Python kernel.
 
 See the [notebook guide](docs/notebook.md) for commands, the file format, portability, cache behavior, and development details.

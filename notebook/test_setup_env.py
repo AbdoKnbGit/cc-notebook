@@ -13,6 +13,26 @@ import setup_env as setup
 
 
 class SetupTests(unittest.TestCase):
+    def test_typst_discovery_reuses_managed_binary_without_installing(self):
+        with tempfile.TemporaryDirectory() as temp:
+            home = Path(temp)
+            binary = setup.typst_binary(home)
+            binary.parent.mkdir(parents=True)
+            binary.write_bytes(b'placeholder')
+            with patch.dict(setup.os.environ, {'CLAUDE_NOTEBOOK_TYPST': ''}), patch.object(setup.shutil, 'which', return_value=None), patch.object(setup, 'typst_works', return_value=True), patch.object(setup.urllib.request, 'urlopen') as download:
+                self.assertEqual(setup.find_typst(home), str(binary))
+                self.assertEqual(setup.install_typst(home), str(binary))
+                download.assert_not_called()
+
+    def test_typst_lookup_respects_override_and_does_not_create_a_home(self):
+        with tempfile.TemporaryDirectory() as temp:
+            home = Path(temp) / 'not-created'
+            with patch.dict(setup.os.environ, {'CLAUDE_NOTEBOOK_TYPST': '/custom/typst'}), patch.object(setup, 'typst_works', return_value=True):
+                self.assertEqual(setup.find_typst(home), '/custom/typst')
+            with patch.dict(setup.os.environ, {'CLAUDE_NOTEBOOK_TYPST': ''}), patch.object(setup.shutil, 'which', return_value=None):
+                self.assertIsNone(setup.find_typst(home))
+            self.assertFalse(home.exists())
+
     def test_platforms_and_requirements_fingerprint(self):
         for system in ('Windows', 'Darwin', 'Linux'):
             for machine in ('AMD64', 'x86_64', 'arm64', 'aarch64'):

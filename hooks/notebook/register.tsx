@@ -1,3 +1,4 @@
+import { adoptNotebookTypst } from '../lib/env'
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On, ElementTable, RenderSurface, RenderElement } from 'claude-code'
 import { actions, bridgeContext, cleanText, commandOf, compactView, initialLab, notebookContext, outputText, parseGenerated, PANE, TOOL, type LabState, type NotebookView } from './model'
@@ -182,6 +183,7 @@ async function prepareRuntime($: EngineInterface, forceManaged = false, repair =
     await openPane($)
     try {
       const result = await setupRuntime($, async setup => { await update($, lab, s => ({ ...s, setup })) }, repair)
+      if (result.typst) await adoptNotebookTypst($, result.typst).catch(() => undefined)
       await update($, lab, s => ({ ...s, notice: result.warning || 'Notebook dependencies ready. Python, Typst and MiTeX checked.' }))
       return result
     } finally { await update($, lab, s => ({ ...s, setup: null })) }
