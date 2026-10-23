@@ -1,0 +1,28 @@
+{
+  "manifest_version": "0.3",
+  "name": "notebook",
+  "version": "0.3.3",
+  "description": "Notebook tool discovery for cc-notebook. Execution stays in the Claude Code notebook session.",
+  "author": {
+    "name": "AbdoKnbGit"
+  },
+  "server": {
+    "type": "binary",
+    "entry_point": "server.py",
+    "mcp_config": {
+      "command": "sh",
+      "args": ["${__dirname}/launch.sh"],
+      "platform_overrides": {
+        "win32": {
+          "command": "powershell.exe",
+          "args": ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "${__dirname}/launch.ps1"]
+        }
+      }
+    }
+  },
+  "compatibility": {
+    "platforms": ["darwin", "win32", "linux"]
+  },
+  "tools": [{"name": "notebook", "description": "Read, edit and run the active Lab notebook."}],
+  "license": "MIT"
+}

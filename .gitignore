@@ -3,6 +3,7 @@
 node_modules/
 .claude-plugin/types/
 .cache/
+.mcpb-cache/
 .claude-notebook/
 __pycache__/
 *.pyc

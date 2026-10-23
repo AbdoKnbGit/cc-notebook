@@ -1,0 +1,31 @@
+{
+  "name": "notebook",
+  "description": "Read, edit and run the active Lab .nb.md notebook in its persistent Python kernel. Use status to get the full notebook with cell IDs, sources, saved outputs and revision; mutation replies focus on the affected cell, and run/run_all return only output produced by that execution. Update changes source, run executes Python, vars inspects live variables. Supply the current revision for mutations. Omit path to use the notebook open in /lab. For export, path selects the existing source notebook and destination is the new .ipynb or .md output path. For import, source is the existing .ipynb file and path optionally names the new .nb.md notebook. AI instructions are cells; generated Python never runs automatically. NotebookEdit is a separate built-in tool for .ipynb files, not this notebook. Outputs are bounded text and image paths; read image paths when visual inspection is needed.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "action": {
+        "type": "string",
+        "enum": ["status", "new", "demo", "open", "add", "update", "remove", "move", "run", "run_all", "vars", "restart", "interrupt", "export", "import"]
+      },
+      "path": {
+        "type": "string",
+        "description": "Existing source .nb.md path for export, target notebook path for open/new, or optional output .nb.md path for import. Omit to use the active notebook."
+      },
+      "revision": {
+        "type": "string",
+        "description": "Current revision returned by status; required for notebook mutations."
+      },
+      "id": {"type": "string", "description": "Cell ID returned by status."},
+      "type": {"type": "string", "enum": ["markdown", "python", "ai"], "description": "Cell type for add."},
+      "source": {"type": "string", "description": "Cell contents for add/update; for import, the existing .ipynb input file path."},
+      "direction": {"type": "string", "enum": ["up", "down"]},
+      "destination": {"type": "string", "description": "New output path for export. This is not the source notebook path."},
+      "format": {"type": "string", "enum": ["ipynb", "markdown"]},
+      "timeout": {"type": "number", "minimum": 1, "maximum": 300}
+    },
+    "required": ["action"],
+    "additionalProperties": false
+  },
+  "_meta": {"anthropic/alwaysLoad": true}
+}

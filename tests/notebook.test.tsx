@@ -1,5 +1,5 @@
 import { expect, mock, test } from 'claude-code/testing'
-import { bridgeContext, commandOf, initialLab, notebookContext, parseGenerated, TOOL, PANE } from '../hooks/notebook/model'
+import { bridgeContext, commandOf, initialLab, notebookContext, parseGenerated, TOOL, LEGACY_TOOL, PANE } from '../hooks/notebook/model'
 import { editorRows } from '../hooks/notebook/editor'
 import { fitPlot, plotSource, clearImageCache } from '../hooks/notebook/images'
 import { diagram, inlineMath, mathText, raster, imageUri } from '../hooks/notebook/rich'
@@ -105,7 +105,7 @@ test('missing Python gives an actionable error without attempting downloads', as
   expect(spawned).toBe(false)
 })
 
-function world(on: any, options: { answer?: string; deny?: boolean; failedSave?: boolean; missingPython?: boolean; toolMissing?: boolean; toolBroken?: boolean; env?: Record<string, string>; drawing?: any } = {}) {
+function world(on: any, options: { answer?: string; deny?: boolean; failedSave?: boolean; missingPython?: boolean; toolMissing?: boolean; toolBroken?: boolean; toolListThrows?: boolean; env?: Record<string, string>; drawing?: any } = {}) {
   mock.store(on)
   const clock = mock.clock(on)
   mock.env(on, { DISABLE_AUTOUPDATER: '1', CLAUDE_NOTEBOOK_PYTHON: 'python', ...options.env })
@@ -116,9 +116,13 @@ function world(on: any, options: { answer?: string; deny?: boolean; failedSave?:
   let toolConnected = !options.toolMissing && !options.toolBroken
   const registrations: any[] = [], focuses: any[] = []
   on('tool.register', (_$: any, e: any) => { registrations.push(e); toolConnected = !options.toolBroken; return { value: { tool: TOOL } } })
-  on('tool.list', () => ({ value: toolConnected ? [{ name: TOOL, description: 'Lab notebook', mcp: true }] : [] }))
+  on('tool.list', () => {
+    if (options.toolListThrows) throw new Error('Tool discovery unavailable')
+    return { value: toolConnected ? [{ name: TOOL, description: 'Lab notebook', mcp: true }] : [] }
+  })
   on('session.start', () => ({ cwd: '/work' }))
-  on('tool.check', () => ({ decision: options.deny ? 'deny' : 'allow', reason: 'Test permission policy' }))
+  const checked: string[] = []
+  on('tool.check', (_$: any, e: any) => { checked.push(e.tool); return { decision: options.deny ? 'deny' : 'allow', reason: 'Test permission policy' } })
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('ui.focus', (_$: any, e: any) => { focuses.push(e); return {} })
   on('ui.toast', () => ({ value: undefined }))
@@ -147,7 +151,7 @@ function world(on: any, options: { answer?: string; deny?: boolean; failedSave?:
     }
     return { value: { exitCode: 0, stdout: JSON.stringify(error ? { ok: false, error } : { ok: true, result }), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
   })
-  return { view, calls, prompts, clock, bridgeCommands, focuses, registrations }
+  return { view, calls, prompts, clock, bridgeCommands, focuses, registrations, checked, connectTools: () => { toolConnected = true } }
 }
 
 test('notebook command preserves quoted Windows paths and validates AI JSON', () => {
@@ -582,25 +586,49 @@ test('the editor keeps complete source, blank lines and latest typing when saved
   }
 })
 
-test('missing tools reconnect before the notebook snapshot reaches Claude', async ($, on) => {
+test('stdio discovery becoming ready is observed without creating a loopback server', async ($, on) => {
   const w = world(on, { toolMissing: true })
   on('prompt.submit', (_$: any, e: any) => ({ text: e.text, context: e.context }))
   await run($, 'new n.nb.md')
+  w.connectTools()
   const reply = await $.prompt.submit({ text: 'Change cell 2 and run it', wait: false, origin: { kind: 'composer' } })
-  expect(w.registrations.length).toBe(1)
-  expect(w.registrations[0].isDeferred).toBe(false)
+  expect(w.registrations.length).toBe(0)
   expect(reply.context?.join('\n')).toContain(TOOL)
   expect(reply.context?.join('\n')).toContain('available in this session')
   expect(w.calls.some(c => c.action === 'run')).toBe(false)
 })
 
-test('tool diagnostics distinguish a broken connection from a successful registration', async ($, on) => {
+test('missing stdio discovery leaves commands usable without registering HTTP tools', async ($, on) => {
   const w = world(on, { toolBroken: true })
   const result = await run($, 'tools')
-  expect(w.registrations.length).toBe(1)
+  expect(w.registrations.length).toBe(0)
   expect(result.text).toContain('not available')
   expect(result.text).toContain('/reload-plugins')
   expect(w.calls.length).toBe(0)
+  await ($ as any).session.start({ source: 'startup', cwd: '/work' })
+  await run($, 'new n.nb.md')
+  expect(w.calls.at(-1).action).toBe('new')
+  expect(w.registrations.length).toBe(0)
+})
+
+test('tool-list exceptions preserve same-kernel fallback and ordinary chat', async ($, on) => {
+  const w = world(on, { toolListThrows: true })
+  on('prompt.submit', (_$: any, e: any) => ({ text: e.text, context: e.context }))
+  await run($, 'new n.nb.md')
+  expect((await run($, 'tools')).text).toContain('status check succeeded')
+  const reply = await $.prompt.submit({ text: 'Explain the current result', wait: false, origin: { kind: 'composer' } })
+  expect(reply.context?.join('\n')).toContain('SAME live notebook kernel')
+  expect(w.registrations.length).toBe(0)
+  expect(w.calls.some(c => c.action === 'run')).toBe(false)
+})
+
+test('legacy notebook tool calls still use their actual permission name', async ($, on) => {
+  const w = world(on)
+  await run($, 'new n.nb.md')
+  const reply = await $.tool.call({ tool: LEGACY_TOOL, action: 'run', id: 'py', revision: 'r1' } as never)
+  expect(reply).not.toHaveProperty('deny')
+  expect(w.checked).toContain(LEGACY_TOOL)
+  expect(w.calls.at(-1).action).toBe('run')
 })
 
 test('a broken native tool supplies the exact same-kernel CLI connection without executing Python', async ($, on) => {

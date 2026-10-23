@@ -111,7 +111,7 @@ Use `.ipynb` for a portable notebook with embedded images. Markdown reports link
 ## Troubleshooting
 
 - **Missing packages or failed downloads:** `/lab setup`; use `/lab setup repair` for a damaged managed environment.
-- **Claude cannot access cells:** open the notebook, then `/lab tools`. A fallback connects to the same kernel if the native tool fails. Restart Claude or use `/reload-plugins` to retry the native connection.
+- **Claude cannot access cells:** open the notebook, then `/lab tools`. Tools use a bundled stdio connection; no HTTP port or token needs configuring. Python 3.10+ must be on PATH. If discovery fails, a fallback connects to the same kernel. Restart Claude or use `/reload-plugins` to retry.
 - **Missing images or raw LaTeX:** `/lab graphics`; check math delimiters and close code fences. Use **Open original image** for full detail.
 - **Changed files or old previews:** save/cancel any draft, then `/lab refresh`.
 
@@ -131,5 +131,7 @@ npm run validate
 ```
 
 Visual tests use Typst from `/lab setup`. Automated tests do not require paid model requests.
+
+After changing `mcp/`, rebuild its checked-in bundle with `npm run build:mcp`. To test real tool discovery and shared kernel state in an isolated Claude session, run `python scripts/test_mcp_host.py --python <notebook-python>`.
 
 Rendering is adapted from [Intelligent UI](https://github.com/razorback16/cc-intelligent-ui), with image transport ideas from [show-your-work](https://github.com/iamumeransari/claude-show-your-work). See [third-party notices](../THIRD_PARTY_NOTICES.md).

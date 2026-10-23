@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.3
+
+- Discover notebook tools over a bundled stdio MCP connection instead of Claude Code's HTTP loopback registration, which can connect but fail to fetch tools. Keep notebook operations in the existing kernel and preserve permission checks and cell-scoped results.
+- Discover Python on Windows, macOS and Linux without user-specific paths or additional Python packages for tool discovery.
+- Keep `/lab` and its same-kernel fallback available if discovery fails. Handle tool-list errors and remember a failed connection until an explicit retry succeeds.
+
 ## 0.3.2
 
 - Render metric/formula tables as compact labels and typeset equations. Improve readable math for accents, fractions and expressions beginning with numbers.

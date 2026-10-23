@@ -1,6 +1,6 @@
 {
   "name": "cc-notebook",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "private": false,
   "scripts": {
     "build": "tsc -p .",
@@ -8,6 +8,7 @@
     "test:plugin": "claude plugin test .",
     "validate": "claude plugin validate .",
     "build:rich": "node scripts/build_rich.mjs",
+    "build:mcp": "python scripts/build_mcp.py",
     "test:visuals": "node scripts/test_visuals.mjs"
   },
   "devDependencies": {

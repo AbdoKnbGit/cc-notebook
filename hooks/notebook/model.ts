@@ -2,7 +2,9 @@ import type { CellOutput, LabState, NotebookView } from '../../types'
 export type { CellKind, CellOutput, LabState, NotebookView, NotebookCell } from '../../types'
 export const initialLab = (): LabState => ({ view: null, selected: null, draft: null, draftRevision: null, busy: null, error: null, notice: null, cost: null, showVars: false, showCode: false, editEpoch: 0, setup: null })
 export const PANE = 'cc-lab'
-export const TOOL = 'mcp__cc-notebook__notebook'
+export const TOOL = 'mcp__plugin_cc-notebook_notebook__notebook'
+export const LEGACY_TOOL = 'mcp__cc-notebook__notebook'
+export const NOTEBOOK_TOOLS = /^(?:mcp__plugin_cc-notebook_notebook__notebook|mcp__cc-notebook__notebook)$/
 export const actions = ['status', 'new', 'demo', 'open', 'add', 'update', 'remove', 'move', 'run', 'run_all', 'vars', 'restart', 'interrupt', 'export', 'import'] as const
 export const cleanText = (text: string) => text.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '').replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '')
 const modelText = (text: string) => cleanText(text).replace(/data:image\/[\w.+-]+;base64,[A-Za-z0-9+/=]+/g, '[embedded image omitted]')
