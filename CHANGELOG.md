@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.2
+
+- Render metric/formula tables as compact labels and typeset equations. Improve readable math for accents, fractions and expressions beginning with numbers.
+- Refresh cached rich outputs after the rendering update without rerunning Python.
+- Shorten the README and notebook guide, keeping setup, commands, features and troubleshooting.
+
 ## 0.3.1
 
 - Render Typst/CeTZ and Mermaid diagrams in notebook Markdown cells and rich Python outputs, with editable source preserved. Reuse the managed runtime and offline packages without running notebook Python.

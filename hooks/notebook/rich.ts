@@ -23,7 +23,17 @@ export function diagram(source: string, columns: number): string | null {
 const symbols: Record<string, string> = { alpha: 'α', beta: 'β', gamma: 'γ', delta: 'δ', theta: 'θ', lambda: 'λ', mu: 'μ', pi: 'π', sigma: 'σ', tau: 'τ', phi: 'φ', omega: 'ω', Delta: 'Δ', Sigma: 'Σ', Omega: 'Ω', sum: '∑', prod: '∏', int: '∫', infty: '∞', pm: '±', times: '×', cdot: '·', le: '≤', leq: '≤', ge: '≥', geq: '≥', neq: '≠', approx: '≈', in: '∈', partial: '∂', nabla: '∇', to: '→' }
 export function mathText(source: string): string {
   if (source.length > 4000) return source.slice(0, 4000) + '…'
-  let text = source.replace(/\\(?:left|right)\b/g, '').replace(/\\([A-Za-z]+)/g, (whole, name: string) => symbols[name] ?? whole)
+  const accents: Record<string, string> = { bar: '\u0304', overline: '\u0304', hat: '\u0302', widehat: '\u0302', tilde: '\u0303', vec: '\u20d7' }
+  let text = source
+    .replace(/\\(?:dfrac|tfrac)\b/g, '\\frac')
+    .replace(/\\(?:lvert|rvert|vert)\b/g, '|')
+    .replace(/\\(bar|overline|hat|widehat|tilde|vec)\{([^{}\n]+)\}/g, (_whole, name: string, value: string) => {
+      const mark = accents[name]!
+      return /^(?:[A-Za-z]|\\[A-Za-z]+)$/.test(value) ? value + mark : name + '(' + value + ')'
+    })
+    .replace(/\\(?:operatorname|boldsymbol)\{([^{}]*)\}/g, '$1')
+    .replace(/\\(?:left|right)\b/g, '')
+    .replace(/\\([A-Za-z]+)/g, (whole, name: string) => symbols[name] ?? whole)
   for (let n = 0; n < 8; n++) {
     const next = text.replace(/\\frac\{([^{}]*)\}\{([^{}]*)\}/g, '($1)/($2)').replace(/\\sqrt\{([^{}]*)\}/g, '√($1)').replace(/\\(?:text|mathrm|mathbf)\{([^{}]*)\}/g, '$1')
     if (next === text) break
@@ -31,15 +41,27 @@ export function mathText(source: string): string {
   }
   // Unknown commands remain visible instead of presenting a misleading equation.
   if (/\\[A-Za-z]/.test(text)) return source
+  const subscript: Record<string, string> = { i: 'ᵢ', j: 'ⱼ', k: 'ₖ', n: 'ₙ', m: 'ₘ', p: 'ₚ', t: 'ₜ', x: 'ₓ', y: 'ᵧ' }
+  const sub = (value: string) => [...value].every(c => subscript[c] || '0123456789+-'.includes(c))
+    ? [...value].map(c => subscript[c] ?? '₀₁₂₃₄₅₆₇₈₉₊₋'['0123456789+-'.indexOf(c)]!).join('') : null
   return text.replace(/e\^\{([^{}]+)\}/g, 'exp($1)').replace(/\^\{([0-9+-]+)\}|\^([0-9+-])/g, (_m, a: string, b: string) => [...(a ?? b)].map(c => '⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻'['0123456789+-'.indexOf(c)]).join(''))
-    .replace(/_\{([0-9+-]+)\}|_([0-9+-])/g, (_m, a: string, b: string) => [...(a ?? b)].map(c => '₀₁₂₃₄₅₆₇₈₉₊₋'['0123456789+-'.indexOf(c)]).join('')).replace(/\\[,;! ]/g, ' ')
+    .replace(/_\{([A-Za-z0-9+-]+)\}|_([A-Za-z0-9+-])/g, (whole, a: string, b: string) => sub(a ?? b) ?? whole).replace(/\\[,;! ]/g, ' ')
 }
 
 export function inlineMath(source: string): string {
   // Protect fenced/inline code and links before recognizing math delimiters.
   return source.split(/(`{3,}[\s\S]*?`{3,}|~{3,}[\s\S]*?~{3,}|`+[^`\n]*`+|!?\[[^\]\n]*\]\([^\n]*?\))/g).map((part, index) => {
     if (index % 2 || part.startsWith('    ') || part.startsWith('\t')) return part
-    return part.replace(/(?<!\\)\\\(([^\n]*?)\\\)|(?<![\\$])\$(?![\s\d$])([^\n$]+?)(?<!\s)\$(?!\d|\$)/g, (_m, a: string, b: string) => mathText(a ?? b))
+    return part
+      .replace(/(?<!\\)\\\(([^\n]*?)\\\)|(?<![\\$])\$(?![\s$])([^\n$]+?)(?<!\s)\$(?!\d|\$)/g, (match, a: string, b: string) => {
+        const expression = a ?? b
+        // Permit equations such as $1 - R^2$, while leaving ordinary prices alone.
+        if (a === undefined && /^\d/.test(expression) && !/[\\^_=+\-*/<>]/.test(expression)) return match
+        return mathText(expression)
+      })
+      // Common accent macros are also frequently written without delimiters in
+      // prose (for example, “the mean \bar{y}”). Make those readable too.
+      .replace(/\\(?:bar|overline|hat|widehat|tilde|vec)\{([^{}\n]+)\}/g, match => mathText(match))
   }).join('')
 }
 

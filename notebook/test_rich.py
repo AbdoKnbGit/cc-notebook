@@ -68,6 +68,34 @@ class RichTests(unittest.TestCase):
         for source in ('```python\n![x](secret.png)\n$$x$$\n```', '```mermaid\ngraph TD\nA --> B', '    ![x](secret.png)', r'\![x](secret.png)', '`![x](secret.png)`'):
             self.assertTrue(all(b['kind'] == 'markdown' for b in blocks(source)))
 
+    def test_metric_formula_tables_become_compact_typeset_equations(self):
+        source = (
+            r'Evaluation metrics, with \bar{y} the mean of y:' '\n\n'
+            '| Metric | Formula |\n| --- | --- |\n'
+            r'| SST | \sum_i (y_i - \bar{y})^2 |' '\n'
+            r'| R² | $1 - \dfrac{\text{SSE}}{\text{SST}}$ |' '\n\n'
+            r'Inference: \hat{\sigma}^2 = \dfrac{\text{SSE}}{n-p-1}, \widehat{\text{Var}}(\hat{\boldsymbol{\beta}}) = \hat{\sigma}^2 (X^\top X)^{-1}.'
+        )
+        parsed = blocks(source)
+        equations = [block['text'] for block in parsed if block['kind'] == 'math']
+        self.assertEqual(equations, [
+            r'\sum_i (y_i - \bar{y})^2',
+            r'1 - \dfrac{\text{SSE}}{\text{SST}}',
+            r'\hat{\sigma}^2 = \dfrac{\text{SSE}}{n-p-1}, \widehat{\text{Var}}(\hat{\boldsymbol{\beta}}) = \hat{\sigma}^2 (X^\top X)^{-1}.',
+        ])
+        rendered_markdown = ''.join(block['text'] for block in parsed if block['kind'] == 'markdown')
+        self.assertIn('**SST**', rendered_markdown)
+        self.assertIn('**R²**', rendered_markdown)
+        self.assertIn(r'\bar{y}', rendered_markdown)
+        self.assertNotIn('| Metric | Formula |', rendered_markdown)
+        self.assertIn('| Metric | Formula |', source)
+        indented = '\n'.join('    ' + line for line in source.splitlines())
+        fenced = chr(96) * 3 + 'text\n' + source + '\n' + chr(96) * 3
+        for literal in (indented, fenced, '| Name | Value |\n| --- | --- |\n| SST | raw text |\n'):
+            self.assertTrue(all(block['kind'] == 'markdown' for block in blocks(literal)))
+        long_table = '| Metric | Formula |\n| --- | --- |\n' + '| SST | x^2 |\n' * 100
+        self.assertLessEqual(len(blocks(long_table)), 80)
+
     def test_images_content_hash_alpha_and_cache_boundary(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -191,11 +219,13 @@ handle.update(Markdown('new'))
                 self.assertTrue(preview.exists())
                 self.assertEqual(repaired['cells'][1]['run']['at'], view['cells'][1]['run']['at'])
                 state = service.docs.state(path)
-                state['runs'][view['cells'][1]['id']].pop('preview_version')
+                state['runs'][view['cells'][1]['id']]['preview_version'] = 'rich-2'
                 state['runs'][view['cells'][1]['id']].pop('output_assets')
                 service.docs.save_state(path, state)
                 migrated = service.handle({'action': 'status'})
                 self.assertIn('asset', migrated['cells'][1]['run']['outputs'][3])
+                self.assertEqual(migrated['cells'][1]['run']['at'], view['cells'][1]['run']['at'])
+                self.assertEqual(service.docs.state(path)['runs'][view['cells'][1]['id']]['preview_version'], service.preview_version)
                 destination = service.handle({'action':'export'})['destination']
                 book = nbformat.read(destination, as_version=4)
                 nbformat.validate(book)

@@ -1,6 +1,6 @@
 {
   "name": "cc-notebook",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "A data science lab in Claude Code: persistent notebooks and rendered chat images, equations, diagrams and charts.",
   "author": {
     "name": "AbdoKnbGit",

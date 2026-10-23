@@ -20,6 +20,47 @@ VERSION = "rich-1"
 IMAGE = re.compile(r'(?<!!)\!\[([^\]\n]*)\]\((<[^>\n]+>|[^\s)]+)(?:\s+"[^"\n]*")?\)')
 
 
+def _table_cells(line):
+    """Split a simple Markdown table row, respecting escaped and code-span pipes."""
+    if '|' not in line:
+        return None
+    value = line.strip()
+    if value.startswith('|'):
+        value = value[1:]
+    if value.endswith('|') and not value.endswith('\\|'):
+        value = value[:-1]
+    cells, current = [], []
+    in_code = False
+    i = 0
+    while i < len(value):
+        char = value[i]
+        if char == chr(96):
+            in_code = not in_code
+        elif char == '\\' and i + 1 < len(value) and value[i + 1] == '|':
+            current.append('|')
+            i += 1
+        elif char == '|' and not in_code:
+            cells.append(''.join(current).strip())
+            current = []
+        else:
+            current.append(char)
+        i += 1
+    cells.append(''.join(current).strip())
+    return cells
+
+
+def _table_separator(cells):
+    return bool(cells) and all(re.fullmatch(r':?-{3,}:?', cell) for cell in cells)
+
+
+def _table_math(source):
+    source = source.strip().strip(chr(96)).strip()
+    for start, end in (('$$', '$$'), ('$', '$'), (r'\(', r'\)'), (r'\[', r'\]')):
+        if source.startswith(start) and source.endswith(end):
+            return source[len(start):-len(end)].strip()
+    return source
+
+
 def blocks(source):
     """Isolate closed fences and display math; incomplete input stays editable text."""
     result, prose = [], []
@@ -47,7 +88,47 @@ def blocks(source):
             kind = "mermaid" if language == "mermaid" else "typst" if language in ("typst", "typ") else "math" if language in ("math", "latex") else "markdown"
             result.append({"kind": kind, "text": text if kind != "markdown" else "".join(lines[i:end + 1])})
             i = end + 1; continue
+        # Formula tables are awkward in a terminal grid and Markdown renderers
+        # do not typeset display math inside table cells. Keep the source intact,
+        # but present each formula as its own normal, typeset equation block.
+        indented_code = line.startswith(('    ', '\t'))
+        header = None if indented_code else _table_cells(line)
+        separator = _table_cells(lines[i + 1]) if i + 1 < len(lines) else None
+        if header and separator and len(header) == 2 and len(separator) == 2 and _table_separator(separator):
+            labels = {'metric', 'name', 'measure', 'statistic'}
+            formulas = {'formula', 'equation', 'expression'}
+            metric_column = next((n for n, cell in enumerate(header) if cell.strip('*_ ').lower() in labels), None)
+            formula_column = next((n for n, cell in enumerate(header) if cell.strip('*_ ').lower() in formulas), None)
+            if metric_column is not None and formula_column is not None and metric_column != formula_column:
+                end = i + 2
+                rows = []
+                while end < len(lines):
+                    row = _table_cells(lines[end])
+                    if not row or len(row) != 2:
+                        break
+                    rows.append(row)
+                    end += 1
+                if rows and len(result) + 2 * len(rows) + bool(prose) <= 80:
+                    flush()
+                    for row in rows:
+                        label, formula = row[metric_column], _table_math(row[formula_column])
+                        if label:
+                            result.append({"kind": "markdown", "text": f'**{label}**\n'})
+                        if formula:
+                            result.append({"kind": "math", "text": formula})
+                    i = end
+                    continue
         stripped = line.strip()
+        # AI-authored inference lines often omit delimiters around their TeX.
+        # A labelled line with several TeX commands is unambiguous enough to
+        # present as a display equation; ordinary prose remains Markdown.
+        inference = re.match(r'^\s*(Inference|Equation|Formula)\s*:\s*(.+?)\s*$', line, re.IGNORECASE)
+        if not indented_code and inference and chr(96) not in line and len(re.findall(r'\\[A-Za-z]+', inference.group(2))) >= 2:
+            flush()
+            result.append({"kind": "markdown", "text": f'**{inference.group(1)}**\n'})
+            result.append({"kind": "math", "text": inference.group(2)})
+            i += 1
+            continue
         delimiter = "$$" if stripped.startswith("$$") else r"\[" if stripped.startswith(r"\[") else None
         if delimiter:
             closing = "$$" if delimiter == "$$" else r"\]"

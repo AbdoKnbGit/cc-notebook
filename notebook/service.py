@@ -341,7 +341,7 @@ class Service:
 
     @property
     def preview_version(self):
-        return 'rich-2-svg' if self.rich.typst else 'rich-2'
+        return 'rich-3-formulas-svg' if self.rich.typst else 'rich-3-formulas'
 
     def cache_outputs(self, path, run):
         # Old notebook caches and evicted previews can be repaired without
