@@ -25,7 +25,7 @@ Select cell 2 for an inline image. Run cell 3 for live Python output.
 ```markdown
 ## An image embedded in Markdown
 
-![Decay experiment](assets/decay.png)
+<!-- /lab demo inserts the generated plot here -->
 
 The blue curve is the proposed model. Orange points show where we sample it.
 On terminals without native images, this appears as a coloured block preview.

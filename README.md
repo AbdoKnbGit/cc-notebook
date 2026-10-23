@@ -1,10 +1,18 @@
-# cc-notebook
+<p align="center">
+  <img src="photo/Logo.png" alt="cc-notebook logo" width="120">
+</p>
+
+<h1 align="center">cc-notebook</h1>
 
 A data science lab inside Claude Code.
 
 Claude gets access to your notebook’s cells, live variables, execution status and saved results. When a cell fails, it can inspect, fix and rerun that cell in the same Python session without restarting the whole workflow.
 
 Your edits and cell runs are shared with Claude on your next chat message. Explanations can refer to actual outputs, and experiments stay connected to the conversation.
+
+<p align="center">
+  <img src="photo/cell8-neural-network-flow.gif" alt="Claude Code notebook workflow demo" width="900">
+</p>
 
 ## Install and setup
 

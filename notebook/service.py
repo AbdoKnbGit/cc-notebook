@@ -15,6 +15,28 @@ from storage import safe_cache, file_lock
 from rich import RichContent
 
 
+def demo_plot_png():
+    """Create the demo's Markdown image when the notebook is copied to a workspace."""
+    from io import BytesIO
+
+    import numpy as np
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    from matplotlib.figure import Figure
+
+    x = np.linspace(0, 6, 80)
+    fig = Figure(figsize=(7, 3.5), dpi=120, layout='constrained', facecolor='#f8fafc')
+    ax = fig.subplots()
+    ax.set_facecolor('#f8fafc')
+    ax.plot(x, np.exp(-x / 2), color='#2563eb', lw=3, label='Predicted signal')
+    ax.scatter(x[::8], np.exp(-x[::8] / 2), color='#ea580c', s=40, label='Sample points', zorder=3)
+    ax.set(xlabel='Time (s)', ylabel='Signal', title='A reproducible decay experiment')
+    ax.grid(alpha=.2)
+    ax.legend()
+    output = BytesIO()
+    FigureCanvasAgg(fig).print_png(output)
+    return output.getvalue()
+
+
 class Service:
     def __init__(self, workspace: Path, runtime: Path):
         self.docs = Documents(workspace)
@@ -163,12 +185,15 @@ class Service:
             doc = parse(source.read_text(encoding='utf-8'))
             # Reopening a demo preserves any experiments the user already saved.
             if not path.exists():
-                data = (source.parent / 'assets' / 'decay.png').read_bytes()
+                data = demo_plot_png()
                 asset = self.docs.path(str(path.parent / 'assets' / ('decay-' + digest(base64.b64encode(data).decode())[:12] + '.png')))
                 if not asset.exists():
                     atomic_write_bytes(asset, data)
                 for c in doc['cells']:
-                    c['source'] = c['source'].replace('assets/decay.png', 'assets/' + asset.name)
+                    c['source'] = c['source'].replace(
+                        '<!-- /lab demo inserts the generated plot here -->',
+                        '![Decay experiment](assets/' + asset.name + ')',
+                    )
                 self.docs.save(path, doc, create=True)
             name = str(path)
         if action == "import":

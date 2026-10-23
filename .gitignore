@@ -8,3 +8,4 @@ __pycache__/
 *.pyc
 .venv/
 .claude/settings.local.json
+examples/assets/decay.png

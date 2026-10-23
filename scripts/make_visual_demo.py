@@ -1,4 +1,4 @@
-"""Rebuild the checked-in visual demo and its portable static plot."""
+"""Rebuild the visual demo and its local plot (generated plot is Git-ignored)."""
 from pathlib import Path
 import sys
 
@@ -46,7 +46,7 @@ $$
 Select cell 2 for an inline image. Run cell 3 for live Python output.'''),
     cell('markdown', '''## An image embedded in Markdown
 
-![Decay experiment](assets/decay.png)
+<!-- /lab demo inserts the generated plot here -->
 
 The blue curve is the proposed model. Orange points show where we sample it.
 On terminals without native images, this appears as a coloured block preview.
